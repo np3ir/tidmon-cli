@@ -13,18 +13,20 @@ A powerful command-line tool for monitoring TIDAL artists, tracking new releases
 - **Artist & Playlist Monitoring**: Keep a list of your favorite artists and playlists to track for new releases.
 - **Automatic Refresh**: Check for new albums and tracks with a single command.
 - **High-Quality Downloads**: Download music in the highest quality available, including Hi-Res FLAC (MAX), with fallback to lower qualities.
-- **Advanced Downloader**: Download by artist, album, track, or URL. Includes support for resuming interrupted downloads and forcing re-downloads.
+- **Sequential Downloader**: Each track is fully completed (audio → lyrics → metadata → cover) before moving to the next, just like tiddl.
+- **Flexible Downloads**: Download by artist, album, track, or URL. Supports resuming interrupted downloads and forcing re-downloads.
 - **Customizable File Organization**: Use powerful and flexible templates to define your folder structure and file naming conventions.
 - **Robust and Resilient**: Handles token expiration automatically for long-running sessions and includes rate-limiting to respect the TIDAL API.
 - **Local Database**: All monitored items and release history are stored locally, giving you full control over your data.
+- **Backup & Restore**: Create and restore backups of your database and configuration at any time.
 
 ## Installation
 
-**Prerequisites**: 
-*   **Python 3.10+**
-*   **FFmpeg**: Make sure `ffmpeg` is installed and available in your system's PATH. It is required for processing audio and video files.
+**Prerequisites**:
+- **Python 3.10+**
+- **FFmpeg**: Must be installed and available in your system's PATH. Required for processing audio and video files.
 
-With the prerequisites met, you can install the project directly from GitHub with a single command:
+Install directly from GitHub with a single command:
 
 ```bash
 pip install git+https://github.com/Np3ir/tidmon-cli.git
@@ -32,24 +34,36 @@ pip install git+https://github.com/Np3ir/tidmon-cli.git
 
 This will download the project, install all dependencies, and create the `tidmon` command in your system.
 
+## Data Directory
+
+`tidmon` stores your database, configuration, and authentication tokens in:
+
+- **Windows**: `C:\Users\YourUser\AppData\Roaming\tidmon\`
+- **Linux/macOS**: `~/.local/share/tidmon/`
+
+This directory is never affected by uninstalling or reinstalling `tidmon`.
+
 ## Quick Start
 
-1.  **Authenticate with TIDAL**:
-    *   Run the interactive login process. This will open a browser window for you to authorize the application.
+1. **Authenticate with TIDAL**:
     ```bash
     tidmon auth
     ```
 
-2.  **Monitor an Artist**:
-    *   Start tracking an artist by their name or TIDAL URL.
+2. **Monitor an Artist**:
     ```bash
     tidmon monitor add "Daft Punk"
+    tidmon monitor add "https://tidal.com/artist/12345"
     ```
 
-3.  **Check for New Releases & Download**:
-    *   `tidmon` will check for any new albums from your monitored artists and automatically download them.
+3. **Check for New Releases & Download**:
     ```bash
     tidmon refresh --download
+    ```
+
+4. **Download a Specific Album or URL**:
+    ```bash
+    tidmon download url "https://tidal.com/album/12345"
     ```
 
 ## Command Reference
