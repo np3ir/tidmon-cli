@@ -37,4 +37,4 @@ dependencies = [
 tidmon = "tidmon.cli:run"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
