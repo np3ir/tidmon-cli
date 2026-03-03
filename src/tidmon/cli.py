@@ -296,7 +296,8 @@ def download_all(ctx, force, dry_run, resume, since, until):
               type=click.Choice(['artists', 'albums', 'tracks'], case_sensitive=False),
               default='artists', show_default=True)
 @click.option('--limit', '-l', default=10, show_default=True)
-def search(query, search_type, limit):
+@click.pass_context
+def search(ctx, query, search_type, limit):
     """Search TIDAL for artists, albums, or tracks."""
     with Search(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as s:
         if search_type == 'artists':

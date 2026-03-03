@@ -312,6 +312,7 @@ class Show:
             f"[green]Downloaded: {downloaded}[/dim]  "
             f"[dim][yellow]Pending: {pending}[/][/dim]\n"
         )
+
     # ── Discography ──────────────────────────────────────────────────────────
 
     def show_discography(self, output_dir: str = ".", formats: list = None):
