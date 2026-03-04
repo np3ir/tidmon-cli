@@ -40,7 +40,7 @@ def setup_logging(verbose: bool = False, debug: bool = False):
 # ── Root command ──────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.1.0", prog_name="tidmon")
+@click.version_option("1.1.1", prog_name="tidmon")
 @click.option('--verbose', '-v', is_flag=True, help='Show info messages.')
 @click.option('--debug', '-d', is_flag=True, help='Show debug messages.')
 @click.pass_context
