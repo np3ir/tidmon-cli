@@ -306,7 +306,10 @@ class AuthAPI:
         return AuthResponse.parse_obj(res.json())
 
     def logout_token(self, access_token: str) -> None:
-        self._session.post(
+        res = self._session.post(
             "https://api.tidal.com/v1/logout",
             headers={"authorization": f"Bearer {access_token}"},
-        ).raise_for_status()
+        )
+        if not res.ok:
+            body = res.text[:200]
+            logger.warning("TIDAL logout failed: status=%s, body=%s", res.status_code, body)

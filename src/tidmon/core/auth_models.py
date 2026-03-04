@@ -103,7 +103,7 @@ class AuthResponse(BaseModel):
 
 
 class AuthResponseWithRefresh(AuthResponse):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 class AuthDeviceResponse(BaseModel):
