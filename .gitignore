@@ -14,3 +14,6 @@ __pycache__/
 
 # Build artifacts
 src/tidmon_cli.egg-info/
+
+# Claude IDE settings
+.claude/
