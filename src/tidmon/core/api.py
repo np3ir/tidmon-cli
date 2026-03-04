@@ -42,11 +42,10 @@ class TidalAPI:
         self.country_code = country_code
         self._rate_limit_delay = 0.0
 
-    def _fetch_with_retry(self, *args: Any, **kwargs: Any):
+    def _fetch_with_retry(self, *args: Any, max_retries: int = 10, **kwargs: Any):
         if self._rate_limit_delay > 0:
             time.sleep(self._rate_limit_delay)
 
-        max_retries = 10
         attempt = 0
         base_backoff = 5
         max_backoff = 60
@@ -94,10 +93,6 @@ class TidalAPI:
                         is_http = True
                         if status == 429:
                             self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
-                        if status in [500, 502, 503, 504]:
-                            wait_time = (2 ** attempt) + self._rate_limit_delay
-                            log.warning(f"Server Error ({status}). Retrying in {wait_time:.1f}s...")
-                            time.sleep(wait_time)
                 elif "429" in str(e):
                     is_http = True
                     self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
@@ -123,8 +118,11 @@ class TidalAPI:
                 elif is_http:
                     if wait <= 0:
                         wait = min(base_backoff * (2 ** (attempt - 1)), max_backoff)
-                    status_display = status if status is not None else "429/Limit"
-                    log.warning(f"API rate limit pause ({status_display})... {wait:.0f}s")
+                    if status in [500, 502, 503, 504]:
+                        log.warning(f"Server Error ({status}). Retrying in {wait:.0f}s...")
+                    else:
+                        status_display = status if status is not None else "429/Limit"
+                        log.warning(f"API rate limit pause ({status_display})... {wait:.0f}s")
 
                 time.sleep(wait + random.uniform(1, 3))
                 continue
@@ -328,8 +326,11 @@ class TidalAPI:
             "countryCode": self.country_code
         }
         try:
+            # max_retries=1: if the quality isn't available (500) fail fast so the
+            # caller's quality-fallback loop can try the next quality immediately.
             return self._fetch_with_retry(
-                TrackStream, f'tracks/{track_id}/playbackinfopostpaywall', params=params
+                TrackStream, f'tracks/{track_id}/playbackinfopostpaywall',
+                max_retries=1, params=params
             )
         except Exception:
             return None
@@ -361,8 +362,11 @@ class TidalAPI:
             "countryCode": self.country_code
         }
         try:
+            # max_retries=1: fail fast so the caller's quality-fallback loop
+            # can try the next quality immediately on server errors.
             return self._fetch_with_retry(
-                VideoStream, f'videos/{video_id}/playbackinfopostpaywall', params=params
+                VideoStream, f'videos/{video_id}/playbackinfopostpaywall',
+                max_retries=1, params=params
             )
         except Exception:
             return None
