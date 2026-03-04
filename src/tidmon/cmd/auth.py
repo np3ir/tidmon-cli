@@ -33,7 +33,7 @@ class Auth:
         """Initiates the device authentication flow."""
         loaded = load_auth_data()
 
-        # Allow re-auth if token exists but is expired
+        # Skip login if a valid (non-expired) token already exists
         if loaded.token and loaded.expires_at and loaded.expires_at > int(time()):
             console.print("[cyan bold]Already logged in.")
             return
@@ -45,7 +45,9 @@ class Auth:
             console.print(f"[bold red]Error starting authentication: {e}")
             return
 
-        uri = f"https://{device_auth.verificationUriComplete}"
+        uri = device_auth.verificationUriComplete
+        if not uri.startswith("http"):
+            uri = f"https://{uri}"
         try:
             webbrowser.open(uri)
         except Exception:
@@ -165,3 +167,4 @@ class Auth:
 
         save_auth_data(loaded)
         console.print("[bold green]Auth token has been refreshed!")
+        console.print(f"[green]Expires in {_format_remaining(loaded.expires_at)}")
