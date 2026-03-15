@@ -18,6 +18,11 @@ MAX_ARTISTS_LEN    = 100   # tiddl parity (was 60)
 MAX_TITLE_LEN      = 150   # tiddl parity (was 120)
 MAX_FILENAME_BYTES = 250   # max bytes for full path component
 MAX_COMPONENT_LEN  = 250   # alias used in sanitize_filename
+
+# Single source of truth for the artist separator default.
+# Used by generate_template_data, format_path, add_track_metadata, and
+# all config.get("artist_separator", ...) call-sites.
+DEFAULT_ARTIST_SEPARATOR = ", "
 RESERVED_BYTE_COUNT = 50   # bytes reserved for downloader suffixes (.flac.part.<hash>)
 
 # ============================================================
@@ -443,13 +448,34 @@ def clean_track_title(track: Track) -> str:
     return _RE_ANTI_FEAT.sub(replacement, track.title).strip()
 
 
+def build_artist_string(
+    track: Union[Track, Video],
+    separator: str = DEFAULT_ARTIST_SEPARATOR,
+) -> str:
+    """Return a joined artist string for metadata tags.
+
+    Sorts MAIN and FEATURED artists separately, then joins them with
+    *separator*.  Falls back to all artists (unsorted by type) when no
+    typed artists are found, and finally to the singular ``track.artist``
+    field as a last resort.
+    """
+    artists_raw = track.artists or []
+    m_arts = sorted([a.name for a in artists_raw if a.type == "MAIN"     and a.name])
+    f_arts = sorted([a.name for a in artists_raw if a.type == "FEATURED" and a.name])
+    if not m_arts and not f_arts:
+        m_arts = sorted([a.name for a in artists_raw if a.name])
+    if not m_arts and track.artist and track.artist.name:
+        m_arts = [track.artist.name]
+    return separator.join(m_arts + f_arts)
+
+
 def generate_template_data(
     item:             Optional[Union[Track, Video]] = None,
     album:            Optional[Album]               = None,
     playlist:         Optional[Playlist]            = None,
     playlist_index:   int                           = 0,
     quality:          str                           = "",
-    artist_separator: str                           = ", ",
+    artist_separator: str                           = DEFAULT_ARTIST_SEPARATOR,
 ) -> dict:
 
     safe_file_len   = MAX_COMPONENT_LEN   # 250 bytes for filenames
@@ -666,7 +692,7 @@ def format_template(
     playlist_index:   int                           = 0,
     quality:          str                           = "",
     with_asterisk_ext: bool                         = True,
-    artist_separator: str                           = ", ",
+    artist_separator: str                           = DEFAULT_ARTIST_SEPARATOR,
     **extra,
 ) -> str:
 

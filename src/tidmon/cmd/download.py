@@ -30,7 +30,7 @@ from tidmon.core.downloader import AdvancedDownloader, DownloadTask, DownloadPri
 from tidmon.core.models.resources import Track, Album, Artist, Video
 from tidmon.core.utils.parse import parse_track_stream, parse_video_stream
 from tidmon.core.utils.ffmpeg import extract_flac, fix_mp4_faststart, convert_to_mp4
-from tidmon.core.utils.format import format_template
+from tidmon.core.utils.format import format_template, DEFAULT_ARTIST_SEPARATOR
 from tidmon.core.utils.cover import Cover
 from tidmon.core.utils.metadata import add_track_metadata, add_video_metadata
 from tidmon.core.utils.deezer import get_genre_from_deezer
@@ -347,7 +347,7 @@ class Download:
                     lyrics=lyrics_text,
                     cover_data=cover_data if self.config.embed_cover_enabled() else None,
                     genre=genre,
-                    artist_separator=self.config.get("artist_separator", ", "),
+                    artist_separator=self.config.get("artist_separator", DEFAULT_ARTIST_SEPARATOR),
                 )
             except Exception as e:
                 logger.error(f"Error applying metadata to {task.track_title}: {e}")
@@ -482,7 +482,7 @@ class Download:
                                 lyrics=lyrics_text,
                                 cover_data=cover_data if self.config.embed_cover_enabled() else None,
                                 genre=genre,
-                                artist_separator=self.config.get("artist_separator", ", "),
+                                artist_separator=self.config.get("artist_separator", DEFAULT_ARTIST_SEPARATOR),
                             )
                         except Exception as e:
                             logger.error(f"Error applying metadata to {task.track_title}: {e}")
@@ -776,7 +776,7 @@ class Download:
             self.config.download_path(media_type=media_type)
             or ('Downloads/Videos' if media_type == 'video' else 'Downloads')
         )
-        kwargs = dict(item=item, with_asterisk_ext=False, artist_separator=self.config.get("artist_separator", ", "))
+        kwargs = dict(item=item, with_asterisk_ext=False, artist_separator=self.config.get("artist_separator", DEFAULT_ARTIST_SEPARATOR))
         if album is not None:
             kwargs['album'] = album
         rel = Path(format_template(template, **kwargs))

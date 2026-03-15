@@ -12,7 +12,11 @@ except ImportError:
     pass
 
 from tidmon.core.models.resources import Track, Album, Video, Contributor
-from tidmon.core.utils.format import clean_track_title as _clean_track_title
+from tidmon.core.utils.format import (
+    clean_track_title as _clean_track_title,
+    build_artist_string,
+    DEFAULT_ARTIST_SEPARATOR,
+)
 from tidmon.core.utils.ffmpeg import is_ffmpeg_installed, convert_to_mp4
 
 logger = logging.getLogger(__name__)
@@ -209,7 +213,7 @@ def add_track_metadata(
     cover_data: Optional[bytes] = None,
     comment: Optional[str] = None,
     genre: Optional[str] = None,
-    artist_separator: str = ", ",
+    artist_separator: str = DEFAULT_ARTIST_SEPARATOR,
 ) -> None:
     """
     Write FLAC or M4A metadata to a track file.
@@ -218,17 +222,8 @@ def add_track_metadata(
       - Source:  album.release_date  (date object or ISO string)
       - Storage: year-only string in both DATE (FLAC) and ©day (M4A)
     """
-    # Build artists string using the same logic as the filename template:
-    # sort MAIN and FEATURED separately, then join — keeps metadata consistent with filename.
-    m_arts = sorted([a.name for a in track.artists if a.type == "MAIN" and a.name])
-    f_arts = sorted([a.name for a in track.artists if a.type == "FEATURED" and a.name])
-    # Fallback: if no typed artists found (e.g. API returned type=None), use all artists sorted
-    if not m_arts and not f_arts:
-        m_arts = sorted([a.name for a in track.artists if a.name])
-    # Last resort: use the singular track.artist field
-    if not m_arts and track.artist and track.artist.name:
-        m_arts = [track.artist.name]
-    artists_str      = artist_separator.join(m_arts + f_arts)
+    # Build artists string via shared helper — keeps metadata consistent with filename template.
+    artists_str      = build_artist_string(track, artist_separator)
     album_artist_str = album.artist.name if album.artist else "Unknown Artist"
 
     # Build title including version so it matches {item.title_version} used in the filename template
