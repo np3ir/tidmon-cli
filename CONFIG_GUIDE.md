@@ -49,6 +49,7 @@ Here is a complete `config.json` with all available options and their defaults.
   "email_password": "",
   "debug_mode": false,
   "monitor_interval_hours": 24,
+  "requests_per_minute": 50,
   "artist_separator": ", ",
   "templates": {
     "default": "{artist_initials}/{album.artist}/({album.date:%Y-%m-%d}) {album.title} ({album.release})/{item.number}. {item.artists_with_features} - {item.title_version} {item.explicit:shortparens}",
@@ -105,6 +106,24 @@ Here is a complete `config.json` with all available options and their defaults.
   - Root directories for your downloads.
   - `"default"`: Base path for all audio downloads.
   - `"video"`: Base path for all video downloads.
+
+### Rate Limiting
+
+- `requests_per_minute`: `integer`
+  - Maximum TIDAL API calls per minute. `tidmon` enforces a fixed-interval gate with
+    per-request jitter so downloads respect the API rate limit without bursting.
+  - An adaptive delay (`_rate_limit_delay`) adjusts automatically: a `+1 s` penalty
+    is added on every HTTP 429 (up to 5 s), and reduced by `0.1 s` on every successful
+    response. This means the setting is a ceiling — actual throughput self-tunes.
+  - **Default**: `50`
+  - **Recommended ranges**:
+    | Value | Use case |
+    |-------|----------|
+    | `30`  | Conservative — shared accounts or slow connections |
+    | `50`  | Default — suits most TIDAL accounts |
+    | `80`  | Aggressive — raise only if 429s never occur |
+
+---
 
 ### Artist Separator
 
