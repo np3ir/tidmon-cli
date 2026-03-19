@@ -173,8 +173,9 @@ class TidalAPI:
         seen_ids: set = set()
         any_success = False
 
-        for f in ["ALBUMS", "EPSANDSINGLES"]:
+        for f in ["ALBUMS", "EPSANDSINGLES", "COMPILATIONS"]:
             offset = 0
+            filter_success = False
             while True:
                 try:
                     params = {
@@ -186,7 +187,7 @@ class TidalAPI:
                     result = self._fetch_with_retry(
                         ArtistAlbumsItems, f'artists/{artist_id}/albums', params=params
                     )
-                    any_success = True
+                    filter_success = True
                     if not result or not result.items:
                         break
 
@@ -200,6 +201,9 @@ class TidalAPI:
                     offset += len(result.items)
                 except Exception:
                     break
+
+            if filter_success:
+                any_success = True
 
         return all_items if any_success else None
 
