@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.2] — 2026-03-18
+
+### Added
+
+- **`tidmon show report`** (`cmd/show.py`, `cli.py`)
+  — New command that displays a per-artist summary of album count and total track
+  count (songs) from the local SQLite database.
+  - Console output: Rich table with artist ID, name, album count, song count, and a
+    totals footer row.
+  - `--export <FILE>`: exports to CSV (utf-8-sig BOM for Excel compatibility) when
+    the extension is `.csv`, or to a dark-themed HTML table when the extension is
+    `.html`.
+
+- **`get_artist_stats()`** (`core/db.py`)
+  — SQL query using `LEFT JOIN albums … GROUP BY artist_id` to aggregate album count
+  and `SUM(number_of_tracks)` per active artist, ordered alphabetically.
+
+### Fixed
+
+- **`UnicodeEncodeError` on Windows cp1252 terminals** (`cmd/show.py`)
+  — Removed emoji characters from `console.print()` export confirmation messages
+  that caused crashes on legacy Windows terminals.
+
+---
+
 ## [1.1.1] — 2026-03-15
 
 ### Changed

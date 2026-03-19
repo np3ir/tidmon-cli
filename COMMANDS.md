@@ -110,6 +110,21 @@ Lets you inspect the local database of artists, albums, and releases.
   - `--since <DATE>` / `--until <DATE>`: Filter albums by release date.
   - `--export <FILE>`: Export to file — `.csv` for spreadsheet, any other extension for tiddl-compatible URL list.
 
+- **`tidmon show report [OPTIONS]`**: Shows a per-artist summary with album count and total song count.
+  - Displays a Rich table in the console with columns: Artist ID, Artist Name, Albums, Songs, and a totals footer row.
+  - `--export <FILE>`: Export the report to a file:
+    - `.csv` — UTF-8 BOM-encoded CSV (compatible with Excel). Columns: `artist_id`, `artist_name`, `album_count`, `total_tracks`.
+    - `.html` — Dark-themed styled HTML table with a totals row.
+
+  **Examples:**
+  ```bash
+  tidmon show report
+  tidmon show report --export reporte_artistas.csv
+  tidmon show report --export reporte_artistas.html
+  ```
+
+  > **Note:** Artists with `album_count = 0` were added to monitoring but have not been refreshed yet via `tidmon refresh`.
+
 ---
 
 ## `search`: Search on TIDAL
