@@ -7,8 +7,10 @@ from tidmon.core.db import Database
 from tidmon.core.config import Config
 from tidmon.core.auth import get_session
 from tidmon.core.auth import TidalSession
+from rich.console import Console
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 
 class Refresh:
@@ -56,8 +58,8 @@ class Refresh:
 
             # Check if there's anything to do if no specific artist is given
             if not artist_id and not artist and not self.db.get_all_artists() and not self.db.get_monitored_playlists():
-                print("\n  No artists or playlists are being monitored.")
-                print("  Use 'tidmon monitor add <artist/playlist>' to get started.")
+                console.print("\n  No artists or playlists are being monitored.")
+                console.print("  Use 'tidmon monitor add <artist/playlist>' to get started.")
                 return
 
             if refresh_artists:
@@ -98,9 +100,9 @@ class Refresh:
             logger.warning("No artists to refresh")
             return
 
-        print(f"\n{'=' * 60}")
-        print(f"  REFRESHING {len(artists)} ARTIST(S)")
-        print(f"{'=' * 60}\n")
+        console.print(f"\n{'=' * 60}")
+        console.print(f"  REFRESHING {len(artists)} ARTIST(S)")
+        console.print(f"{'=' * 60}\n")
         for artist_obj in artists:
             self._refresh_artist(artist_obj, album_since, album_until)
 
@@ -109,12 +111,12 @@ class Refresh:
         artist_name = artist['artist_name']
 
         logger.info(f"Refreshing: {artist_name}")
-        print(f"  • {artist_name}...", end='', flush=True)
+        console.print(f"  [dim]•[/] {artist_name}...", end='')
 
         api_albums = self.api.get_artist_albums(artist_id)
 
         if api_albums is None:
-            print(f"  ✗ API error (skipped, will retry next refresh)")
+            console.print(f"  [red]x[/] API error (skipped, will retry next refresh)")
             logger.warning(f"API returned no data for {artist_name} (ID: {artist_id}) — not updating check time")
             return
 
@@ -156,9 +158,9 @@ class Refresh:
                     logger.info(f"  → New release: {album.title}")
 
         if new_count > 0:
-            print(f"  ✓ {new_count} new release(s)")
+            console.print(f"  [green]+[/] {new_count} new release(s)")
         else:
-            print(f"  ✓ up to date")
+            console.print(f"  [dim]ok[/] up to date")
 
         self.db.update_artist_check_time(artist_id)
 
@@ -167,9 +169,9 @@ class Refresh:
         if not playlists:
             return
 
-        print(f"\n{'=' * 60}")
-        print(f"  REFRESHING {len(playlists)} PLAYLIST(S)")
-        print(f"{'=' * 60}\n")
+        console.print(f"\n{'=' * 60}")
+        console.print(f"  REFRESHING {len(playlists)} PLAYLIST(S)")
+        console.print(f"{'=' * 60}\n")
 
         for playlist in playlists:
             self._refresh_playlist(playlist)
@@ -179,7 +181,7 @@ class Refresh:
         playlist_name = playlist['name']
 
         logger.info(f"Refreshing playlist: {playlist_name}")
-        print(f"  • {playlist_name}...", end='', flush=True)
+        console.print(f"  [dim]•[/] {playlist_name}...", end='')
 
         try:
             current_tracks = self.api.get_playlist_items(playlist_uuid)
@@ -188,9 +190,9 @@ class Refresh:
             new_track_ids = current_track_ids - known_track_ids
 
             if not new_track_ids:
-                print(f"  ✓ no new tracks")
+                console.print(f"  [dim]ok[/] no new tracks")
             else:
-                print(f"  ✓ {len(new_track_ids)} new track(s)")
+                console.print(f"  [green]+[/] {len(new_track_ids)} new track(s)")
                 new_tracks = [t for t in current_tracks if t.id in new_track_ids]
                 self.new_playlist_tracks.append({
                     'playlist_name': playlist_name,
@@ -202,45 +204,45 @@ class Refresh:
 
         except Exception as e:
             logger.error(f"Failed to refresh playlist '{playlist_name}': {e}")
-            print(f"  ✗ error: {e}")
+            console.print(f"  [red]x[/] error: {e}")
 
     def _show_summary(self):
-        print(f"\n{'=' * 60}")
-        print("  REFRESH SUMMARY")
-        print(f"{'=' * 60}\n")
+        console.print(f"\n{'=' * 60}")
+        console.print("  REFRESH SUMMARY")
+        console.print(f"{'=' * 60}\n")
 
         if not self.new_releases and not self.new_playlist_tracks:
-            print("  No new releases or playlist changes detected.\n")
+            console.print("  No new releases or playlist changes detected.\n")
             return
 
         if self.new_releases:
-            print(f"  NEW RELEASES ({len(self.new_releases)}):\n")
+            console.print(f"  NEW RELEASES ({len(self.new_releases)}):\n")
             for release in self.new_releases:
                 album = release['album']
                 release_date = album.release_date.strftime('%Y-%m-%d') if album.release_date else "?"
-                print(f"    • {release['artist_name']} - {album.title}")
-                print(f"      Type: {album.type or 'ALBUM'}  |  Date: {release_date}  |  ID: {album.id}")
-            print()
+                console.print(f"    [bold]{release['artist_name']}[/] - {album.title}")
+                console.print(f"      Type: {album.type or 'ALBUM'}  |  Date: {release_date}  |  ID: {album.id}")
+            console.print()
 
         if self.new_playlist_tracks:
-            print(f"  NEW PLAYLIST TRACKS:\n")
+            console.print(f"  NEW PLAYLIST TRACKS:\n")
             for item in self.new_playlist_tracks:
-                print(f"    Playlist: {item['playlist_name']}")
+                console.print(f"    Playlist: {item['playlist_name']}")
                 for track in item['tracks']:
                     artists = ", ".join([a.name for a in track.artists]) if track.artists else "Unknown"
-                    print(f"      → {track.title} by {artists}")
-            print()
+                    console.print(f"      - {track.title} by {artists}")
+            console.print()
 
-        print(f"{'=' * 60}\n")
+        console.print(f"{'=' * 60}\n")
 
     def _download_new_releases(self):
         """Auto-download all newly detected releases."""
         from tidmon.cmd.download import Download
         dl = Download()
-        print("\n  AUTO-DOWNLOADING new releases...\n")
+        console.print("\n  AUTO-DOWNLOADING new releases...\n")
         for release in self.new_releases:
             album = release['album']
-            print(f"  ⬇  {release['artist_name']} - {album.title}")
+            console.print(f"  >> {release['artist_name']} - {album.title}")
             dl.download_album(album.id)
 
     def _send_email_notification(self):
@@ -254,7 +256,7 @@ class Refresh:
 
         if not all([smtp_server, email_from, email_to, email_password]):
             logger.warning("Email notifications enabled but SMTP settings incomplete.")
-            print("  ⚠  Email configured but SMTP settings incomplete. Check config.")
+            console.print("  [yellow]Email configured but SMTP settings incomplete. Check config.[/]")
             return
 
         # Build message body
@@ -299,10 +301,10 @@ class Refresh:
                 server.login(email_from, email_password)
                 server.sendmail(email_from, email_to, msg.as_string())
             logger.info(f"Email notification sent to {email_to}")
-            print(f"  ✉  Notification sent to {email_to}")
+            console.print(f"  [green]Email notification sent to {email_to}[/]")
         except smtplib.SMTPAuthenticationError:
             logger.error("SMTP authentication failed. Check email/password in config.")
-            print("  ✗  Email failed: authentication error. Check smtp settings.")
+            console.print("  [red]Email failed: authentication error. Check smtp settings.[/]")
         except Exception as e:
             logger.error(f"Failed to send email notification: {e}")
-            print(f"  ✗  Email failed: {e}")
+            console.print(f"  [red]Email failed: {e}[/]")
