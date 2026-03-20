@@ -1,3 +1,4 @@
+import re
 import time
 import random
 import logging
@@ -136,7 +137,9 @@ class TidalAPI:
                 Album, f"albums/{album_id}", {"countryCode": self.country_code}
             )
         except Exception:
-            return None
+            pass
+        log.debug(f"v1 get_album failed for {album_id}, trying v2 fallback...")
+        return self._get_album_v2(album_id)
 
     def get_album_tracks(self, album_id: int) -> List[Track]:
         all_tracks = []
@@ -157,6 +160,13 @@ class TidalAPI:
                     break
             except Exception:
                 break
+
+        if not all_tracks:
+            log.debug(f"v1 returned no tracks for album {album_id}, trying v2 fallback...")
+            v2_tracks = self._get_album_tracks_v2(album_id)
+            if v2_tracks:
+                log.info(f"v2 fallback found {len(v2_tracks)} track(s) for album {album_id}")
+            return v2_tracks
         return all_tracks
 
     # ── Artists ───────────────────────────────────────────────────────────────
@@ -318,6 +328,210 @@ class TidalAPI:
 
         return albums
 
+    # ── openapi.tidal.com/v2 internal utilities ───────────────────────────────
+
+    @staticmethod
+    def _iso_to_sec(s: Optional[str]) -> Optional[int]:
+        """Convert ISO 8601 duration string (e.g. 'PT2M24S') to integer seconds."""
+        if not s:
+            return None
+        m = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', s)
+        if not m:
+            return None
+        h, mi, sec = m.groups()
+        return int(float(h or 0)) * 3600 + int(float(mi or 0)) * 60 + int(float(sec or 0))
+
+    @staticmethod
+    def _v2_audio_quality(media_tags: list) -> Optional[str]:
+        """Derive an audioQuality string from v2 mediaTags list."""
+        if "HIRES_LOSSLESS" in media_tags:
+            return "HI_RES_LOSSLESS"
+        if "LOSSLESS" in media_tags:
+            return "LOSSLESS"
+        if media_tags:
+            return "HIGH"
+        return None
+
+    def _get_album_v2(self, album_id: ID) -> Optional[Album]:
+        """Fallback: fetch a single album from openapi.tidal.com/v2."""
+        body = self._v2_get(f"albums/{album_id}")
+        if not body:
+            return None
+        data = body.get("data", {})
+        attrs = data.get("attributes", {})
+        try:
+            return Album(
+                id=int(data["id"]),
+                title=attrs.get("title", "Unknown"),
+                number_of_tracks=attrs.get("numberOfItems"),
+                number_of_volumes=attrs.get("numberOfVolumes"),
+                duration=self._iso_to_sec(attrs.get("duration")),
+                release_date=attrs.get("releaseDate"),
+                type=attrs.get("albumType") or attrs.get("type"),
+                explicit=attrs.get("explicit"),
+                audio_quality=self._v2_audio_quality(attrs.get("mediaTags") or []),
+                copyright=(attrs.get("copyright") or {}).get("text"),
+            )
+        except Exception as e:
+            log.debug(f"v2 album parse error for id={album_id}: {e}")
+            return None
+
+    def _get_album_tracks_v2(self, album_id: int) -> List[Track]:
+        """Fallback: fetch album tracks from openapi.tidal.com/v2 (JSON:API).
+
+        Collects track IDs from the cursor-paginated /albums/{id}/relationships/items
+        endpoint, then batch-fetches full track data from /tracks?filter[id]=...
+        """
+        # Step 1 — collect track IDs via cursor-paginated items relationship
+        track_ids: list = []
+        cursor: Optional[str] = None
+        while True:
+            params: dict = {}
+            if cursor:
+                params["page[cursor]"] = cursor
+            body = self._v2_get(f"albums/{album_id}/relationships/items", params)
+            if not body:
+                break
+            items = body.get("data", [])
+            if not items:
+                break
+            # relationship items have type "tracks" or "videos"; keep only tracks
+            track_ids.extend(item["id"] for item in items if item.get("type") == "tracks")
+            cursor = body.get("meta", {}).get("nextCursor")
+            if not cursor:
+                break
+
+        if not track_ids:
+            return []
+
+        # Step 2 — fetch track details in batches of 20
+        tracks: List[Track] = []
+        seen: set = set()
+        for i in range(0, len(track_ids), 20):
+            batch = track_ids[i:i + 20]
+            body = self._v2_get("tracks", {"filter[id]": ",".join(str(tid) for tid in batch)})
+            if not body:
+                continue
+            for item in body.get("data", []):
+                attrs = item.get("attributes", {})
+                tid = int(item["id"])
+                if tid in seen:
+                    continue
+                seen.add(tid)
+                try:
+                    bpm_raw = attrs.get("bpm")
+                    tracks.append(Track(
+                        id=tid,
+                        title=attrs.get("title", "Unknown"),
+                        duration=self._iso_to_sec(attrs.get("duration")),
+                        isrc=attrs.get("isrc"),
+                        explicit=attrs.get("explicit"),
+                        bpm=int(round(bpm_raw)) if bpm_raw is not None else None,
+                        version=attrs.get("version"),
+                        copyright=(attrs.get("copyright") or {}).get("text"),
+                        audio_quality=self._v2_audio_quality(attrs.get("mediaTags") or []),
+                    ))
+                except Exception as e:
+                    log.debug(f"v2 track parse error for id={tid}: {e}")
+        return tracks
+
+    def _get_artist_videos_v2(self, artist_id: ID) -> List[Video]:
+        """Fallback: fetch artist videos from openapi.tidal.com/v2 (JSON:API)."""
+        # Step 1 — collect video IDs via cursor-paginated relationship
+        video_ids: list = []
+        cursor: Optional[str] = None
+        while True:
+            params: dict = {}
+            if cursor:
+                params["page[cursor]"] = cursor
+            body = self._v2_get(f"artists/{artist_id}/relationships/videos", params)
+            if not body:
+                break
+            items = body.get("data", [])
+            if not items:
+                break
+            video_ids.extend(item["id"] for item in items)
+            cursor = body.get("meta", {}).get("nextCursor")
+            if not cursor:
+                break
+
+        if not video_ids:
+            return []
+
+        # Step 2 — fetch video details in batches of 20
+        videos: List[Video] = []
+        seen: set = set()
+        for i in range(0, len(video_ids), 20):
+            batch = video_ids[i:i + 20]
+            body = self._v2_get("videos", {"filter[id]": ",".join(str(vid) for vid in batch)})
+            if not body:
+                continue
+            for item in body.get("data", []):
+                attrs = item.get("attributes", {})
+                vid = int(item["id"])
+                if vid in seen:
+                    continue
+                seen.add(vid)
+                try:
+                    videos.append(Video(
+                        id=vid,
+                        title=attrs.get("title", "Unknown"),
+                        duration=self._iso_to_sec(attrs.get("duration")),
+                        explicit=attrs.get("explicit"),
+                        releaseDate=attrs.get("releaseDate"),
+                    ))
+                except Exception as e:
+                    log.debug(f"v2 video parse error for id={vid}: {e}")
+        return videos
+
+    def _get_track_v2(self, track_id: ID) -> Optional[Track]:
+        """Fallback: fetch a single track from openapi.tidal.com/v2."""
+        body = self._v2_get(f"tracks/{track_id}")
+        if not body:
+            return None
+        data = body.get("data", {})
+        attrs = data.get("attributes", {})
+        try:
+            bpm_raw = attrs.get("bpm")
+            return Track(
+                id=int(data["id"]),
+                title=attrs.get("title", "Unknown"),
+                duration=self._iso_to_sec(attrs.get("duration")),
+                isrc=attrs.get("isrc"),
+                explicit=attrs.get("explicit"),
+                bpm=int(round(bpm_raw)) if bpm_raw is not None else None,
+                version=attrs.get("version"),
+                copyright=(attrs.get("copyright") or {}).get("text"),
+                audio_quality=self._v2_audio_quality(attrs.get("mediaTags") or []),
+            )
+        except Exception as e:
+            log.debug(f"v2 track parse error for id={track_id}: {e}")
+            return None
+
+    def _get_track_lyrics_v2(self, track_id: ID) -> Optional[TrackLyrics]:
+        """Fallback: fetch track lyrics from openapi.tidal.com/v2 (two-step).
+
+        Step 1: resolve the lyrics ID from /tracks/{id}/relationships/lyrics.
+        Step 2: fetch full content from /lyrics/{id} and map to TrackLyrics.
+        """
+        body = self._v2_get(f"tracks/{track_id}/relationships/lyrics")
+        if not body:
+            return None
+        items = body.get("data", [])
+        if not items:
+            return None
+        lyric_id = items[0].get("id") if isinstance(items, list) else items.get("id")
+        if not lyric_id:
+            return None
+        body = self._v2_get(f"lyrics/{lyric_id}")
+        if not body:
+            return None
+        attrs = body.get("data", {}).get("attributes", {})
+        return TrackLyrics(
+            lyrics=attrs.get("text"),
+            subtitles=attrs.get("lrcText"),
+        )
+
     def get_artist_videos(self, artist_id: ID) -> List[Video]:
         all_items = []
         offset = 0
@@ -343,6 +557,13 @@ class TidalAPI:
                     break
             except Exception:
                 break
+
+        if not all_items:
+            log.debug(f"v1 returned no videos for artist {artist_id}, trying v2 fallback...")
+            v2_videos = self._get_artist_videos_v2(artist_id)
+            if v2_videos:
+                log.info(f"v2 fallback found {len(v2_videos)} video(s) for artist {artist_id}")
+            return v2_videos
         return all_items
 
     def get_artist_bio(self, artist_id: ID) -> Optional[ArtistBio]:
@@ -426,7 +647,9 @@ class TidalAPI:
                 Track, f'tracks/{track_id}', {"countryCode": self.country_code}
             )
         except Exception:
-            return None
+            pass
+        log.debug(f"v1 get_track failed for {track_id}, trying v2 fallback...")
+        return self._get_track_v2(track_id)
 
     def get_track_lyrics(self, track_id: int) -> Optional[TrackLyrics]:
         try:
@@ -434,7 +657,9 @@ class TidalAPI:
                 TrackLyrics, f'tracks/{track_id}/lyrics', {"countryCode": self.country_code}
             )
         except Exception:
-            return None
+            pass
+        log.debug(f"v1 get_track_lyrics failed for {track_id}, trying v2 fallback...")
+        return self._get_track_lyrics_v2(track_id)
 
     def get_track_stream(self, track_id: int, quality: str = "LOSSLESS") -> Optional[TrackStream]:
         params = {

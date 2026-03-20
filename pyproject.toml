@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tidmon-cli"
-version = "1.1.2"
+version = "1.1.3"
 authors = [
   { name="Np3ir", email="author@example.com" },
 ]
