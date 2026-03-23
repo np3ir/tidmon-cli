@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.8] — 2026-03-22
+
+### Fixed
+
+- **Skip Various Artists compilations during artist download and refresh** (`cmd/download.py`, `cmd/refresh.py`)
+  — When downloading an artist's discography or refreshing monitored artists, albums
+  whose primary artist is "Various Artists" / "Varios Artistas" / "Varios" are now
+  skipped automatically. This prevents Tidal editorial compilations from being
+  downloaded as part of a regular artist's discography.
+  - `_download_artist_async`: skips and logs a summary of skipped compilations.
+  - `_refresh_artist`: skips Various Artists albums before adding them to the DB.
+
+---
+
 ## [1.1.2] — 2026-03-18
 
 ### Added

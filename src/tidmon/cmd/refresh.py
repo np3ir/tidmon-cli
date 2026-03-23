@@ -148,6 +148,11 @@ class Refresh:
         for album in api_albums:
             if album.type and album.type.upper() not in [t.upper() for t in allowed_types]:
                 continue
+            # Skip Various Artists compilations
+            album_artist = getattr(album.artist, 'name', '') if album.artist else ''
+            if album_artist.lower() in ('various artists', 'varios artistas', 'varios'):
+                logger.debug(f"Skipping Various Artists album: {album.title} ({album.id})")
+                continue
             if album.id not in db_album_ids:
                 if self.db.add_album(album, artist_id):
                     new_count += 1

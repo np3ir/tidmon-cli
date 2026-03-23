@@ -528,10 +528,18 @@ class Download:
             self.ui.print("[yellow]⚠️ No albums found for artist.")
         else:
             self.ui.print(f"[bold]📀 Found {len(albums)} albums.[/] Starting download...\n")
+            skipped_va = 0
             for i, album in enumerate(albums, 1):
+                album_artist = getattr(album.artist, 'name', '') if album.artist else ''
+                if album_artist.lower() in ('various artists', 'varios artistas', 'varios'):
+                    skipped_va += 1
+                    logger.debug(f"Skipping Various Artists album: {album.title} ({album.id})")
+                    continue
                 self.ui.print(f"[dim]-> ALBUM [{i}/{len(albums)}]")
                 album_stats = await self._download_album_async(album.id, force=force)
                 global_stats.update(album_stats)
+            if skipped_va:
+                self.ui.print(f"[dim]⏭ Skipped {skipped_va} Various Artists compilation(s)")
         
         if self.config.save_video_enabled():
             videos = self.api.get_artist_videos(artist_id)
