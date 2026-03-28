@@ -32,6 +32,7 @@ class Config:
             "default": str(Path.home() / "Music" / "tidmon"),
             "video": str(Path.home() / "Videos" / "tidmon")
         },
+        "concurrent_downloads": 2,
         "requests_per_minute": 50,
         "debug_mode": False,
         "monitor_interval_hours": 24,
@@ -228,6 +229,9 @@ class Config:
 
     def email_notifications_enabled(self) -> bool:
         return self.get('email_notifications', False)
+
+    def concurrent_downloads(self) -> int:
+        return int(self.get("concurrent_downloads", 2))
 
     def quality_order(self) -> list[str]:
         """

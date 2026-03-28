@@ -195,6 +195,11 @@ class Monitor:
             if album.type not in allowed_types:
                 logger.debug(f"Skipping {album.title} ({album.type}) - not in record_types")
                 continue
+            # Skip Various Artists compilations
+            album_artist = getattr(album.artist, 'name', '') if album.artist else ''
+            if album_artist.lower() in ('various artists', 'varios artistas', 'varios'):
+                logger.debug(f"Skipping Various Artists album: {album.title} ({album.id})")
+                continue
 
             if self.db.add_album(album, artist_id):
                 count += 1

@@ -444,15 +444,13 @@ class Download:
         self.downloader.reset_stats()
         self.current_tasks.clear()
 
-        # Sequential download: audio → lrc → metadata → next track (tiddl order)
+        # Concurrent download: up to concurrent_downloads tracks in parallel
         track_map = {t.id: t for t in tracks}
         session   = await self.downloader._get_session()
+        _track_sem = asyncio.Semaphore(self.config.concurrent_downloads())
 
-        self.ui.start(total=len(tasks))
-        for _ in skipped_tasks:
-            self.ui.track_finish_silent()
-        try:
-            for task in active_tasks:
+        async def _download_one(task):
+            async with _track_sem:
                 # 1. Download audio file
                 await self.downloader.download_file(task, session)
 
@@ -486,6 +484,12 @@ class Download:
                             )
                         except Exception as e:
                             logger.error(f"Error applying metadata to {task.track_title}: {e}")
+
+        self.ui.start(total=len(tasks))
+        for _ in skipped_tasks:
+            self.ui.track_finish_silent()
+        try:
+            await asyncio.gather(*[_download_one(task) for task in active_tasks])
         finally:
             self.ui.stop()
 
@@ -680,6 +684,13 @@ class Download:
             dry_run:       Print what would be downloaded without doing it.
             summary_title: Label shown in the final summary rule.
         """
+        # Skip Various Artists compilations
+        va_names = ('various artists', 'varios artistas', 'varios')
+        albums = [
+            a for a in albums
+            if (a.get("album_artist_name") or "").lower() not in va_names
+        ]
+
         # Apply resume filter (skip albums already downloaded unless force)
         to_download = [
             a for a in albums

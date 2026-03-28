@@ -131,6 +131,11 @@ class Database:
                 ''')
                 logger.info("Migration complete: artist_albums populated.")
 
+            # Migration 3: album_artist_name column
+            if 'album_artist_name' not in columns:
+                logger.info("Migrating database: Adding 'album_artist_name' column to albums table.")
+                cursor.execute("ALTER TABLE albums ADD COLUMN album_artist_name TEXT")
+
         except sqlite3.Error as e:
             logger.error(f"Database migration error: {e}")
     
@@ -330,12 +335,14 @@ class Database:
             added_date = datetime.now().isoformat()
             release_date_str = album.release_date.isoformat() if album.release_date else None
 
+            album_artist_name = getattr(album.artist, 'name', None) if album.artist else None
+
             # 1. Insert album row only if it doesn't exist yet (no overwrite)
             cursor.execute('''
                 INSERT OR IGNORE INTO albums
                 (album_id, artist_id, title, release_date, album_type,
-                 explicit, number_of_tracks, added_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 explicit, number_of_tracks, added_date, album_artist_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 album.id,
                 artist_id,
@@ -345,6 +352,7 @@ class Database:
                 album.explicit,
                 album.number_of_tracks,
                 added_date,
+                album_artist_name,
             ))
 
             # 2. Always register the artist-album relationship
