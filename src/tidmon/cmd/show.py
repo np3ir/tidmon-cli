@@ -490,8 +490,8 @@ class Show:
 
         fmt_str = ", ".join(f.upper() for f in formats)
         console.print(
-            f"\n[green]✅ Discography exported[/] — "
-            f"{len(letters)} letter(s) × {len(formats)} format(s) = "
+            f"\n[green]OK Discography exported[/] - "
+            f"{len(letters)} letter(s) x {len(formats)} format(s) = "
             f"[bold]{total_files} file(s)[/] in [dim]{out}[/]\n"
         )
 
