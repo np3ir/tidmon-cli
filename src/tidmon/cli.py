@@ -207,6 +207,7 @@ def monitor_export(ctx, output):
 @click.option('--download', '-D', is_flag=True, help='Auto-download new releases after refresh.')
 @click.option('--videos-only', is_flag=True, help='With --download, download only new videos (skip albums).')
 @click.option('--check-videos', is_flag=True, help='Detect new videos for all monitored artists and show in summary (slower).')
+@click.option('--register-videos', is_flag=True, help='Detect new videos and add them to the DB as known (no download). Useful to seed the DB so only future videos are treated as new.')
 @click.option('--video-since', default=None, help='With --check-videos/--videos-only: only check artists added since date (YYYY-MM-DD).')
 @click.option('--video-until', default=None, help='With --check-videos/--videos-only: only check artists added until date (YYYY-MM-DD).')
 @click.option('--since', default=None, help='Only refresh artists added since date (YYYY-MM-DD).')
@@ -214,7 +215,7 @@ def monitor_export(ctx, output):
 @click.option('--album-since', default=None, help='Only process albums released after this date (YYYY-MM-DD).')
 @click.option('--album-until', default=None, help='Only process albums released before this date (YYYY-MM-DD).')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, video_since, video_until, since, until, album_since, album_until):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until):
     """Check monitored artists for new releases."""
     with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as r:
         r.refresh(
@@ -225,6 +226,7 @@ def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, vide
             download=download,
             videos_only=videos_only,
             check_videos=check_videos,
+            register_videos=register_videos,
             video_since=video_since,
             video_until=video_until,
             since=since,

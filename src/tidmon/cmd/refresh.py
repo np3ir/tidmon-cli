@@ -54,6 +54,7 @@ class Refresh:
             download: bool = False,
             videos_only: bool = False,
             check_videos: bool = False,
+            register_videos: bool = False,
             video_since: str = None,
             video_until: str = None,
     ):
@@ -73,10 +74,13 @@ class Refresh:
             if refresh_playlists:
                 self._refresh_all_playlists()
 
-            if check_videos or (download and videos_only):
+            if check_videos or register_videos or (download and videos_only):
                 self._collect_new_videos(videos_only=True, since=video_since, until=video_until)
             elif download and self.new_releases:
                 self._collect_new_videos(videos_only=False)
+
+            if register_videos and self.new_videos:
+                self._register_videos()
 
             self._show_summary()
 
@@ -299,6 +303,18 @@ class Refresh:
                 console.print(f"  [green]+[/] {new_count} new video(s)")
             else:
                 console.print(f"  [dim]ok[/] up to date")
+
+    def _register_videos(self):
+        """Add all detected videos to the DB as downloaded=1 without downloading files."""
+        count = 0
+        for item in self.new_videos:
+            video = item['video']
+            artist_name = video.artist.name if video.artist else item['artist_name']
+            release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else None
+            if self.db.mark_video_as_downloaded(video.id, video.title, artist_name, release_date):
+                count += 1
+        self.new_videos.clear()
+        console.print(f"\n  [green]✓[/] {count} video(s) registered in DB (skipped on future runs).")
 
     def _download_new_releases(self, videos_only: bool = False):
         """Auto-download all newly detected releases and/or videos."""
