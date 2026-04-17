@@ -71,12 +71,14 @@ class Refresh:
             if refresh_playlists:
                 self._refresh_all_playlists()
 
-            if check_videos:
+            if check_videos or (download and videos_only):
                 self._collect_new_videos(videos_only=True)
+            elif download and self.new_releases:
+                self._collect_new_videos(videos_only=False)
 
             self._show_summary()
 
-            if download and (self.new_releases or videos_only):
+            if download and (self.new_releases or self.new_videos):
                 self._download_new_releases(videos_only=videos_only)
 
             if self.config.email_notifications_enabled() and (self.new_releases or self.new_playlist_tracks):
@@ -291,7 +293,6 @@ class Refresh:
     def _download_new_releases(self, videos_only: bool = False):
         """Auto-download all newly detected releases and/or videos."""
         from tidmon.cmd.download import Download
-        self._collect_new_videos(videos_only=videos_only)
         dl = Download()
         if not videos_only and self.new_releases:
             console.print("\n  AUTO-DOWNLOADING new releases...\n")
