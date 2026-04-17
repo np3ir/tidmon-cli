@@ -169,17 +169,6 @@ class Refresh:
         else:
             console.print(f"  [dim]ok[/] up to date")
 
-        if self.config.save_video_enabled():
-            api_videos = self.api.get_artist_videos(artist_id)
-            if api_videos:
-                new_video_count = 0
-                for video in api_videos:
-                    if not self.db.is_video_downloaded(video.id):
-                        self.new_videos.append({'artist_name': artist_name, 'video': video})
-                        new_video_count += 1
-                if new_video_count:
-                    console.print(f"  [green]+[/] {new_video_count} new video(s)")
-
         self.db.update_artist_check_time(artist_id)
 
     def _refresh_all_playlists(self):
@@ -229,8 +218,8 @@ class Refresh:
         console.print("  REFRESH SUMMARY")
         console.print(f"{'=' * 60}\n")
 
-        if not self.new_releases and not self.new_playlist_tracks and not self.new_videos:
-            console.print("  No new releases, videos, or playlist changes detected.\n")
+        if not self.new_releases and not self.new_playlist_tracks:
+            console.print("  No new releases or playlist changes detected.\n")
             return
 
         if self.new_releases:
@@ -240,15 +229,6 @@ class Refresh:
                 release_date = album.release_date.strftime('%Y-%m-%d') if album.release_date else "?"
                 console.print(f"    [bold]{release['artist_name']}[/] - {album.title}")
                 console.print(f"      Type: {album.type or 'ALBUM'}  |  Date: {release_date}  |  ID: {album.id}")
-            console.print()
-
-        if self.new_videos:
-            console.print(f"  NEW VIDEOS ({len(self.new_videos)}):\n")
-            for item in self.new_videos:
-                video = item['video']
-                release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else "?"
-                console.print(f"    [bold]{item['artist_name']}[/] - {video.title}")
-                console.print(f"      Date: {release_date}  |  ID: {video.id}")
             console.print()
 
         if self.new_playlist_tracks:
@@ -262,9 +242,43 @@ class Refresh:
 
         console.print(f"{'=' * 60}\n")
 
+    def _collect_new_videos(self, videos_only: bool = False):
+        """Fetch and detect new videos. Called only when --download is active.
+
+        videos_only=False: check only artists that have new album releases.
+        videos_only=True:  check all monitored artists (full video sync).
+        """
+        if not self.config.save_video_enabled():
+            return
+
+        if videos_only:
+            artists = self.db.get_all_artists()
+            targets = [(a['artist_id'], a['artist_name']) for a in artists]
+        else:
+            seen = {}
+            for r in self.new_releases:
+                aid = r['album'].artist.id if r['album'].artist else None
+                if aid and aid not in seen:
+                    seen[aid] = r['artist_name']
+            targets = list(seen.items())
+
+        if not targets:
+            return
+
+        console.print(f"\n  Checking videos for {len(targets)} artist(s)...")
+        for artist_id, artist_name in targets:
+            api_videos = self.api.get_artist_videos(artist_id)
+            for video in (api_videos or []):
+                if not self.db.is_video_downloaded(video.id):
+                    self.new_videos.append({'artist_name': artist_name, 'video': video})
+
+        if self.new_videos:
+            console.print(f"  [green]+[/] {len(self.new_videos)} new video(s) found")
+
     def _download_new_releases(self, videos_only: bool = False):
         """Auto-download all newly detected releases and/or videos."""
         from tidmon.cmd.download import Download
+        self._collect_new_videos(videos_only=videos_only)
         dl = Download()
         if not videos_only and self.new_releases:
             console.print("\n  AUTO-DOWNLOADING new releases...\n")

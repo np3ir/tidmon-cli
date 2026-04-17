@@ -98,6 +98,20 @@ class ArtistVideosItems(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+    @validator('items', pre=True)
+    @classmethod
+    def skip_invalid_videos(cls, v):
+        if not isinstance(v, list):
+            return v
+        result = []
+        for item in v:
+            try:
+                Video(**item) if isinstance(item, dict) else item
+                result.append(item)
+            except Exception:
+                pass
+        return result
+
 
 class Favorites(BaseModel):
     limit: int
