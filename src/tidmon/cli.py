@@ -206,12 +206,13 @@ def monitor_export(ctx, output):
 @click.option('--no-playlists', 'skip_playlists', is_flag=True, help='Skip playlist refresh.')
 @click.option('--download', '-D', is_flag=True, help='Auto-download new releases after refresh.')
 @click.option('--videos-only', is_flag=True, help='With --download, download only new videos (skip albums).')
+@click.option('--check-videos', is_flag=True, help='Detect new videos for all monitored artists and show in summary (slower).')
 @click.option('--since', default=None, help='Only refresh artists added since date (YYYY-MM-DD).')
 @click.option('--until', default=None, help='Only refresh artists added until date (YYYY-MM-DD).')
 @click.option('--album-since', default=None, help='Only process albums released after this date (YYYY-MM-DD).')
 @click.option('--album-until', default=None, help='Only process albums released before this date (YYYY-MM-DD).')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, since, until, album_since, album_until):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, since, until, album_since, album_until):
     """Check monitored artists for new releases."""
     with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as r:
         r.refresh(
@@ -221,6 +222,7 @@ def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, vide
             refresh_playlists=not skip_playlists,
             download=download,
             videos_only=videos_only,
+            check_videos=check_videos,
             since=since,
             until=until,
             album_since=album_since,

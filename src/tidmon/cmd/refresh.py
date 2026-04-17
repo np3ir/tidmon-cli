@@ -53,6 +53,7 @@ class Refresh:
             album_until: str = None,
             download: bool = False,
             videos_only: bool = False,
+            check_videos: bool = False,
     ):
         """Refresh monitored content and detect new releases."""
         try:
@@ -69,6 +70,9 @@ class Refresh:
 
             if refresh_playlists:
                 self._refresh_all_playlists()
+
+            if check_videos:
+                self._collect_new_videos(videos_only=True)
 
             self._show_summary()
 
@@ -218,8 +222,8 @@ class Refresh:
         console.print("  REFRESH SUMMARY")
         console.print(f"{'=' * 60}\n")
 
-        if not self.new_releases and not self.new_playlist_tracks:
-            console.print("  No new releases or playlist changes detected.\n")
+        if not self.new_releases and not self.new_playlist_tracks and not self.new_videos:
+            console.print("  No new releases, videos, or playlist changes detected.\n")
             return
 
         if self.new_releases:
@@ -229,6 +233,15 @@ class Refresh:
                 release_date = album.release_date.strftime('%Y-%m-%d') if album.release_date else "?"
                 console.print(f"    [bold]{release['artist_name']}[/] - {album.title}")
                 console.print(f"      Type: {album.type or 'ALBUM'}  |  Date: {release_date}  |  ID: {album.id}")
+            console.print()
+
+        if self.new_videos:
+            console.print(f"  NEW VIDEOS ({len(self.new_videos)}):\n")
+            for item in self.new_videos:
+                video = item['video']
+                release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else "?"
+                console.print(f"    [bold]{item['artist_name']}[/] - {video.title}")
+                console.print(f"      Date: {release_date}  |  ID: {video.id}")
             console.print()
 
         if self.new_playlist_tracks:
