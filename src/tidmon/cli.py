@@ -205,12 +205,13 @@ def monitor_export(ctx, output):
 @click.option('--no-artists', 'skip_artists', is_flag=True, help='Skip artist refresh.')
 @click.option('--no-playlists', 'skip_playlists', is_flag=True, help='Skip playlist refresh.')
 @click.option('--download', '-D', is_flag=True, help='Auto-download new releases after refresh.')
+@click.option('--videos-only', is_flag=True, help='With --download, download only new videos (skip albums).')
 @click.option('--since', default=None, help='Only refresh artists added since date (YYYY-MM-DD).')
 @click.option('--until', default=None, help='Only refresh artists added until date (YYYY-MM-DD).')
 @click.option('--album-since', default=None, help='Only process albums released after this date (YYYY-MM-DD).')
 @click.option('--album-until', default=None, help='Only process albums released before this date (YYYY-MM-DD).')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, since, until, album_since, album_until):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, since, until, album_since, album_until):
     """Check monitored artists for new releases."""
     with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as r:
         r.refresh(
@@ -219,6 +220,7 @@ def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, sinc
             refresh_artists=not skip_artists,
             refresh_playlists=not skip_playlists,
             download=download,
+            videos_only=videos_only,
             since=since,
             until=until,
             album_since=album_since,
@@ -273,6 +275,15 @@ def download_album(ctx, album_id, force):
 def download_track(ctx, track_id, force):
     """Download a track by ID."""
     Download(verbose=ctx.obj.get('verbose', False), config=ctx.obj.get('config')).download_track(track_id, force=force)
+
+
+@download.command('video')
+@click.pass_context
+@click.argument('video_id', type=int)
+@click.option('--force', is_flag=True, default=False, help='Force re-download even if file exists.')
+def download_video(ctx, video_id, force):
+    """Download a video by ID."""
+    Download(verbose=ctx.obj.get('verbose', False), config=ctx.obj.get('config')).download_video(video_id, force=force)
 
 
 @download.command('monitored')

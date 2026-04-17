@@ -600,6 +600,9 @@ class Download:
         )
 
         if not force:
+            if self.db.is_video_downloaded(video_id):
+                self.ui.print(f"[yellow]⚠️ Video '{video.title}' already downloaded. Skipping.")
+                return Counter({'skipped': 1})
             for ext_check in ['.mp4', '.mkv']:
                 possible_path = file_path_no_ext.with_name(file_path_no_ext.name + ext_check)
                 if possible_path.exists():
@@ -639,6 +642,9 @@ class Download:
                 logger.debug("Metadata applied")
             except Exception as e:
                 logger.error(f"Error applying metadata: {e}")
+            artist_name = video.artist.name if video.artist else None
+            release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else None
+            self.db.mark_video_as_downloaded(video_id, video.title, artist_name, release_date)
 
         # Fix 8: print summary on all call paths (was missing for direct download_video() calls)
         self._print_summary(f"Video: {video.title}", stats)

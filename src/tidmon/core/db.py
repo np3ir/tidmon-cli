@@ -102,6 +102,18 @@ class Database:
                     FOREIGN KEY (playlist_uuid) REFERENCES monitored_playlists (uuid) ON DELETE CASCADE
                 )
             ''')
+
+            # Videos table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS videos (
+                    video_id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    artist_name TEXT,
+                    release_date TEXT,
+                    downloaded INTEGER DEFAULT 0,
+                    downloaded_date TEXT
+                )
+            ''')
             
             self._migrate_schema(cursor)
             
@@ -135,6 +147,21 @@ class Database:
             if 'album_artist_name' not in columns:
                 logger.info("Migrating database: Adding 'album_artist_name' column to albums table.")
                 cursor.execute("ALTER TABLE albums ADD COLUMN album_artist_name TEXT")
+
+            # Migration 4: videos table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='videos'")
+            if not cursor.fetchone():
+                logger.info("Migrating database: Creating videos table.")
+                cursor.execute('''
+                    CREATE TABLE videos (
+                        video_id INTEGER PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        artist_name TEXT,
+                        release_date TEXT,
+                        downloaded INTEGER DEFAULT 0,
+                        downloaded_date TEXT
+                    )
+                ''')
 
         except sqlite3.Error as e:
             logger.error(f"Database migration error: {e}")
@@ -445,6 +472,36 @@ class Database:
         except sqlite3.Error as e:
             logger.error(f"Failed to get albums: {e}")
             return []
+
+    def is_video_downloaded(self, video_id: int) -> bool:
+        """Return True if the video has been marked as downloaded."""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute('SELECT downloaded FROM videos WHERE video_id = ?', (video_id,))
+            row = cursor.fetchone()
+            return bool(row and row['downloaded'])
+        except sqlite3.Error as e:
+            logger.error(f"Failed to check video {video_id}: {e}")
+            return False
+
+    def mark_video_as_downloaded(self, video_id: int, title: str, artist_name: str = None, release_date: str = None) -> bool:
+        """Insert or update a video row and mark it as downloaded."""
+        try:
+            cursor = self.connection.cursor()
+            downloaded_date = datetime.now().isoformat()
+            cursor.execute('''
+                INSERT INTO videos (video_id, title, artist_name, release_date, downloaded, downloaded_date)
+                VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(video_id) DO UPDATE SET
+                    downloaded = 1,
+                    downloaded_date = excluded.downloaded_date
+            ''', (video_id, title, artist_name, release_date, downloaded_date))
+            self.connection.commit()
+            logger.debug(f"Marked video {video_id} as downloaded.")
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"Failed to mark video {video_id} as downloaded: {e}")
+            return False
 
     def mark_album_as_downloaded(self, album_id: int):
         """Mark an album as downloaded."""

@@ -23,6 +23,7 @@ class Refresh:
         self._api = None
         self.new_releases = []
         self.new_playlist_tracks = []
+        self.new_videos = []
 
     @property
     def api(self):
@@ -51,6 +52,7 @@ class Refresh:
             album_since: str = None,
             album_until: str = None,
             download: bool = False,
+            videos_only: bool = False,
     ):
         """Refresh monitored content and detect new releases."""
         try:
@@ -70,8 +72,8 @@ class Refresh:
 
             self._show_summary()
 
-            if download and self.new_releases:
-                self._download_new_releases()
+            if download and (self.new_releases or self.new_videos):
+                self._download_new_releases(videos_only=videos_only)
 
             if self.config.email_notifications_enabled() and (self.new_releases or self.new_playlist_tracks):
                 self._send_email_notification()
@@ -167,6 +169,17 @@ class Refresh:
         else:
             console.print(f"  [dim]ok[/] up to date")
 
+        if self.config.save_video_enabled():
+            api_videos = self.api.get_artist_videos(artist_id)
+            if api_videos:
+                new_video_count = 0
+                for video in api_videos:
+                    if not self.db.is_video_downloaded(video.id):
+                        self.new_videos.append({'artist_name': artist_name, 'video': video})
+                        new_video_count += 1
+                if new_video_count:
+                    console.print(f"  [green]+[/] {new_video_count} new video(s)")
+
         self.db.update_artist_check_time(artist_id)
 
     def _refresh_all_playlists(self):
@@ -216,8 +229,8 @@ class Refresh:
         console.print("  REFRESH SUMMARY")
         console.print(f"{'=' * 60}\n")
 
-        if not self.new_releases and not self.new_playlist_tracks:
-            console.print("  No new releases or playlist changes detected.\n")
+        if not self.new_releases and not self.new_playlist_tracks and not self.new_videos:
+            console.print("  No new releases, videos, or playlist changes detected.\n")
             return
 
         if self.new_releases:
@@ -227,6 +240,15 @@ class Refresh:
                 release_date = album.release_date.strftime('%Y-%m-%d') if album.release_date else "?"
                 console.print(f"    [bold]{release['artist_name']}[/] - {album.title}")
                 console.print(f"      Type: {album.type or 'ALBUM'}  |  Date: {release_date}  |  ID: {album.id}")
+            console.print()
+
+        if self.new_videos:
+            console.print(f"  NEW VIDEOS ({len(self.new_videos)}):\n")
+            for item in self.new_videos:
+                video = item['video']
+                release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else "?"
+                console.print(f"    [bold]{item['artist_name']}[/] - {video.title}")
+                console.print(f"      Date: {release_date}  |  ID: {video.id}")
             console.print()
 
         if self.new_playlist_tracks:
@@ -240,15 +262,22 @@ class Refresh:
 
         console.print(f"{'=' * 60}\n")
 
-    def _download_new_releases(self):
-        """Auto-download all newly detected releases."""
+    def _download_new_releases(self, videos_only: bool = False):
+        """Auto-download all newly detected releases and/or videos."""
         from tidmon.cmd.download import Download
         dl = Download()
-        console.print("\n  AUTO-DOWNLOADING new releases...\n")
-        for release in self.new_releases:
-            album = release['album']
-            console.print(f"  >> {release['artist_name']} - {album.title}")
-            dl.download_album(album.id)
+        if not videos_only and self.new_releases:
+            console.print("\n  AUTO-DOWNLOADING new releases...\n")
+            for release in self.new_releases:
+                album = release['album']
+                console.print(f"  >> {release['artist_name']} - {album.title}")
+                dl.download_album(album.id)
+        if self.new_videos:
+            console.print("\n  AUTO-DOWNLOADING new videos...\n")
+            for item in self.new_videos:
+                video = item['video']
+                console.print(f"  >> {item['artist_name']} - {video.title}")
+                dl.download_video(video.id)
 
     def _send_email_notification(self):
         """Send email notification about new releases."""
