@@ -20,7 +20,9 @@ class Database:
     def _init_database(self):
         """Initialize database with required tables"""
         try:
-            self.connection = sqlite3.connect(self.db_file)
+            self.connection = sqlite3.connect(self.db_file, timeout=30, check_same_thread=False)
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            self.connection.execute("PRAGMA busy_timeout=30000")
             self.connection.row_factory = sqlite3.Row
             cursor = self.connection.cursor()
             
