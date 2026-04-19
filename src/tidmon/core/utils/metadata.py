@@ -17,7 +17,7 @@ from tidmon.core.utils.format import (
     build_artist_string,
     DEFAULT_ARTIST_SEPARATOR,
 )
-from tidmon.core.utils.ffmpeg import is_ffmpeg_installed, convert_to_mp4
+from tidmon.core.utils.ffmpeg import is_ffmpeg_installed, convert_to_mp4, fix_mp4_faststart
 
 logger = logging.getLogger(__name__)
 
@@ -298,39 +298,38 @@ def add_video_metadata(path: Path, video: Video) -> None:
         logger.warning(f"Skipping video metadata — not an MP4 file: {path}")
         return
 
+    # Remux if mutagen can't open it directly
     try:
-        mutagen = MutagenEasyMP4(path)
-    except Exception as e:
-        logger.error(f"Could not open MP4 for metadata: {path} → {e}")
-        return
+        MutagenMP4(path)
+    except Exception:
+        if not is_ffmpeg_installed():
+            logger.warning(f"Skipping video metadata (not a valid MP4, ffmpeg not found): {path.name}")
+            return
+        try:
+            path = fix_mp4_faststart(path)
+            MutagenMP4(path)
+        except Exception:
+            logger.warning(f"Skipping video metadata (remux failed): {path.name}")
+            return
 
-    artists_str = ";".join([a.name.strip() for a in video.artists]) if video.artists else ""
+    artists_str = ";".join([a.name.strip() for a in video.artists if a.name]) if video.artists else (video.artist.name if video.artist else "")
+    album_artist = video.artist.name if video.artist else artists_str
+    album_title  = video.album.title if video.album else ""
+    raw_date     = video.release_date or getattr(video, 'stream_start_date', None)
+    date_str     = raw_date.isoformat() if raw_date else None
 
-    meta: dict = {
-        "title":  video.title,
-        "artist": artists_str,
-    }
-
-    if video.artist:
-        meta["albumartist"] = video.artist.name
-    if video.album and video.album.title:
-        meta["album"] = video.album.title
-
-    # Prefer releaseDate over streamStartDate — same priority as tiddl
-    raw_date = video.release_date or video.stream_start_date
-    if raw_date:
-        # Store year only for consistency with track metadata
-        year = _parse_year(str(raw_date))
-        if year:
-            meta["date"] = str(year)
-
-    if video.track_number:
-        meta["tracknumber"] = str(video.track_number)
-    if video.volume_number:
-        meta["discnumber"] = str(video.volume_number)
-
-    try:
-        mutagen.update({k: v for k, v in meta.items() if v is not None})
-        mutagen.save(path)
-    except Exception as e:
-        logger.error(f"Could not save MP4 metadata: {path} → {e}")
+    add_m4a_metadata(
+        track_path   = path,
+        title        = video.title or "",
+        track_number = str(video.track_number or 0),
+        disc_number  = str(video.volume_number or 0),
+        album_title  = album_title,
+        album_artist = album_artist,
+        artists      = artists_str,
+        date         = date_str,
+        copyright_str= None,
+        comment      = None,
+        bpm          = None,
+        lyrics       = None,
+        cover_data   = None,
+    )

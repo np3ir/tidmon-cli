@@ -476,6 +476,7 @@ class AdvancedDownloader:
         output_path: Path,
         track_id: Optional[int] = None,
         track_title: Optional[str] = None,
+        on_segment: Optional[Callable] = None,
     ) -> tuple[bool, Optional[str]]:
         """
         Download multiple HLS segments and concatenate them into a single file.
@@ -490,6 +491,7 @@ class AdvancedDownloader:
 
             session = await self._get_session()
 
+            total_segs = len(urls)
             try:
                 async with aiofiles.open(tmp_path, "wb") as out_f:
                     for i, url in enumerate(urls):
@@ -505,12 +507,14 @@ class AdvancedDownloader:
                                         return False, f"Segment {i}: HTTP {response.status}"
                                     async for chunk in response.content.iter_chunked(self.chunk_size):
                                         await out_f.write(chunk)
+                                    if on_segment:
+                                        on_segment()
+                                        await asyncio.sleep(0)
                                     break  # segment OK
                             except Exception as e:
                                 if attempt == MAX_RETRIES - 1:
                                     raise
                                 await asyncio.sleep(2 ** attempt)
-
                 shutil.move(str(tmp_path), str(output_path))
                 self.stats["completed"] += 1
                 return True, None

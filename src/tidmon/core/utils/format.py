@@ -401,13 +401,16 @@ def parse_date_safe(date_str: Any) -> datetime:
     if not date_str:
         return datetime.min
     if isinstance(date_str, datetime):
-        return date_str
-    try:
-        if len(str(date_str)) == 10 and '-' in str(date_str):
-            return datetime.strptime(str(date_str), "%Y-%m-%d")
-        return datetime.fromisoformat(str(date_str))
-    except (ValueError, TypeError):
-        return datetime.min
+        dt = date_str
+    else:
+        try:
+            if len(str(date_str)) == 10 and '-' in str(date_str):
+                dt = datetime.strptime(str(date_str), "%Y-%m-%d")
+            else:
+                dt = datetime.fromisoformat(str(date_str))
+        except (ValueError, TypeError):
+            return datetime.min
+    return dt
 
 
 def clean_track_title(track: Track) -> str:
@@ -491,7 +494,7 @@ def generate_template_data(
         if not m_arts and len(artists_raw) == 1 and artists_raw[0].name:
             m_arts = [artists_raw[0].name]
 
-        ver = (item.version or "").strip()
+        ver = (getattr(item, 'version', None) or "").strip()
 
         is_dolby = False
         if isinstance(item, Track) and item.media_metadata and item.media_metadata.tags:
@@ -514,12 +517,12 @@ def generate_template_data(
             title                = t_trunc,
             safe_title           = sanitize_filename(t_trunc, item.id, max_len=safe_file_len),
             title_version        = tv_trunc,
-            number               = item.track_number  or 0,
-            volume               = item.volume_number or 0,
+            number               = getattr(item, 'track_number',  None) or 0,
+            volume               = getattr(item, 'volume_number', None) or 0,
             version              = ver,
-            copyright            = item.copyright or "",
-            bpm                  = item.bpm      or 0,
-            isrc                 = item.isrc     or "",
+            copyright            = getattr(item, 'copyright', None) or "",
+            bpm                  = getattr(item, 'bpm',        None) or 0,
+            isrc                 = getattr(item, 'isrc',       None) or "",
             quality              = quality,
             artist               = art_name,
             safe_artist          = sanitize_filename(art_name, item.id, max_len=safe_folder_len),

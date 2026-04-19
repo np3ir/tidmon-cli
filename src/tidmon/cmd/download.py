@@ -78,8 +78,8 @@ class RichUI:
         self.dl_progress = Progress(
             SpinnerColumn(),
             TextColumn("{task.description}"),
-            FileSizeColumn(),
-            TransferSpeedColumn(),
+            BarColumn(bar_width=30),
+            MofNCompleteColumn(),
             console=self.console,
         )
         self.total_progress = Progress(
@@ -109,28 +109,32 @@ class RichUI:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def start(self, total: int) -> None:
-        """Start the Live display for a new batch, resetting previous state."""
-        # Clear all leftover tasks from the previous album
         for task_id in list(self.dl_progress.task_ids):
             self.dl_progress.remove_task(task_id)
         for task_id in list(self.total_progress.task_ids):
             self.total_progress.remove_task(task_id)
-
         self._total = total
         self._total_task = self.total_progress.add_task("", total=total)
-        self._live.start()
+        if not self._live.is_started:
+            self._live.start()
 
     def stop(self) -> None:
-        """Stop the Live display."""
-        self._live.stop()
+        if self._live.is_started:
+            self._live.stop()
 
     # ── per-track API ────────────────────────────────────────────────────────
 
-    def track_start(self, description: str, total_bytes: int | None = None) -> TaskID:
-        return self.dl_progress.add_task(description, total=total_bytes)
+    def track_start(self, description: str, total_bytes: int | None = None, total_segments: int | None = None) -> TaskID:
+        for tid in list(self.dl_progress.task_ids):
+            self.dl_progress.remove_task(tid)
+        total = total_segments if total_segments is not None else total_bytes
+        return self.dl_progress.add_task(description, total=total)
 
-    def track_advance(self, task_id: TaskID, chunk: int) -> None:
-        self.dl_progress.update(task_id, advance=chunk)
+    def track_advance(self, task_id: TaskID, advance: int = 1) -> None:
+        try:
+            self.dl_progress.advance(task_id, advance)
+        except Exception:
+            pass
 
     def track_finish(self, task_id: TaskID) -> None:
         self.dl_progress.remove_task(task_id)
@@ -138,7 +142,6 @@ class RichUI:
             self.total_progress.advance(self._total_task, 1)
 
     def track_finish_silent(self) -> None:
-        """Advance total counter without removing a dl_progress bar (for pre-skipped tasks)."""
         if self._total_task is not None:
             self.total_progress.advance(self._total_task, 1)
 
@@ -366,6 +369,9 @@ class Download:
 
     def download_video(self, video_id: int, force: bool = False):
         self._run_async(self._download_video_async(video_id, force=force))
+
+    def download_pending_videos(self, force: bool = False, dry_run: bool = False, ignore_db: bool = False):
+        self._run_async(self._download_pending_videos_async(force=force, dry_run=dry_run, ignore_db=ignore_db))
 
     def download_playlist(self, url: str, force: bool = False):
         from tidmon.core.utils.url import parse_url, TidalType
@@ -595,68 +601,110 @@ class Download:
         await self._apply_post_processing([task], [track], album)
         self._print_summary("Track Download", Counter(stats))
 
-    async def _download_video_async(self, video_id: int, force: bool = False) -> Counter:
+    async def _download_video_async(self, video_id: int, force: bool = False, ignore_db: bool = False, manage_ui: bool = True) -> Counter:
         video = self.api.get_video(video_id)
         if not video:
             self.ui.print(f"[red]❌ Video {video_id} not found")
             return Counter()
-
-        self.ui.console.rule(f"[bold magenta]{video.title}")
 
         file_path_no_ext = self._build_output_path(
             item=video, media_type='video', template_key='video'
         )
 
         if not force:
-            if self.db.is_video_downloaded(video_id):
-                self.ui.print(f"[yellow]⚠️ Video '{video.title}' already downloaded. Skipping.")
+            if not ignore_db and self.db.is_video_downloaded(video_id):
+                self.ui.print_result("[yellow]Exists", video.title, None)
+                self.ui.track_finish_silent()
                 return Counter({'skipped': 1})
             for ext_check in ['.mp4', '.mkv']:
                 possible_path = file_path_no_ext.with_name(file_path_no_ext.name + ext_check)
                 if possible_path.exists():
-                    self.ui.print(f"[yellow]⚠️ Video '{video.title}' already exists. Skipping.")
+                    self.ui.print_result("[yellow]Exists", video.title, possible_path)
+                    self.ui.track_finish_silent()
                     return Counter({'skipped': 1})
 
         stream_data = self.api.get_video_stream(video_id)
-        if not stream_data: logger.error(f"No stream data for video {video_id}"); return Counter({'failed': 1})
+        if not stream_data:
+            self.ui.print_result("[red]Failed (no stream)", video.title, None)
+            return Counter({'failed': 1})
         urls, ext = parse_video_stream(stream_data)
-        if not urls: logger.error(f"Could not parse stream for {video.title}"); return Counter({'failed': 1})
+        if not urls:
+            self.ui.print_result("[red]Failed (no URLs)", video.title, None)
+            return Counter({'failed': 1})
 
         output_path = file_path_no_ext.with_name(file_path_no_ext.name + ext)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.downloader.reset_stats()
-        # Fix 1: HLS streams return multiple segment URLs — concatenate all of them.
-        # Single-URL streams (progressive MP4) use the regular download path.
-        if len(urls) > 1:
-            await self.downloader.download_segments(
-                urls=urls,
-                output_path=output_path,
-                track_id=video_id,
-                track_title=video.title,
-            )
-            stats = Counter(self.downloader.get_stats())
-        else:
-            task = DownloadTask(
-                url=urls[0], output_path=output_path,
-                track_id=video_id, track_title=video.title,
-                priority=DownloadPriority.NORMAL,
-            )
-            stats = Counter(await self.downloader.download_batch([task]))
+        if manage_ui:
+            self.ui.start(1)
+        try:
+            if len(urls) > 1:
+                task_id = self.ui.track_start(video.title, total_segments=len(urls))
+                await self.downloader.download_segments(
+                    urls=urls,
+                    output_path=output_path,
+                    track_id=video_id,
+                    track_title=video.title,
+                    on_segment=lambda: self.ui.track_advance(task_id),
+                )
+                self.ui.track_finish(task_id)
+                stats = Counter(self.downloader.get_stats())
+            else:
+                task = DownloadTask(
+                    url=urls[0], output_path=output_path,
+                    track_id=video_id, track_title=video.title,
+                    priority=DownloadPriority.NORMAL,
+                )
+                stats = Counter(await self.downloader.download_batch([task]))
+        finally:
+            if manage_ui:
+                self.ui.stop()
 
         if output_path.exists():
             try:
                 add_video_metadata(path=output_path, video=video)
-                logger.debug("Metadata applied")
             except Exception as e:
                 logger.error(f"Error applying metadata: {e}")
             artist_name = video.artist.name if video.artist else None
             release_date = video.release_date.strftime('%Y-%m-%d') if video.release_date else None
             self.db.mark_video_as_downloaded(video_id, video.title, artist_name, release_date)
+            self.ui.print_result("[green]Downloaded", video.title, output_path)
 
-        # Fix 8: print summary on all call paths (was missing for direct download_video() calls)
-        self._print_summary(f"Video: {video.title}", stats)
         return stats
+
+    async def _download_pending_videos_async(self, force: bool = False, dry_run: bool = False, ignore_db: bool = False):
+        if ignore_db:
+            rows = self.db.connection.execute(
+                "SELECT video_id, title, artist_name FROM videos ORDER BY release_date DESC"
+            ).fetchall()
+        else:
+            rows = self.db.connection.execute(
+                "SELECT video_id, title, artist_name FROM videos WHERE downloaded = 0 ORDER BY release_date DESC"
+            ).fetchall()
+        if not rows:
+            self.ui.print("[yellow]No videos found in database.")
+            return
+        self.ui.print(f"[cyan]Found {len(rows)} video(s).")
+        if dry_run:
+            for video_id, title, artist in rows:
+                self.ui.print(f"  [dim]{video_id}[/dim]  {artist} — {title}")
+            return
+        total = Counter()
+        n = len(rows)
+        self.ui.start(n)
+        try:
+            for i, (video_id, title, artist) in enumerate(rows, 1):
+                self.ui.console.print(f"[dim][{i}/{n}][/dim] {artist} — {title}")
+                try:
+                    stats = await self._download_video_async(video_id, force=force, ignore_db=ignore_db, manage_ui=False)
+                    total += stats
+                except Exception as e:
+                    logger.error(f"Error downloading video {video_id}: {e}")
+                    total['failed'] += 1
+        finally:
+            self.ui.stop()
+        self._print_summary(f"Videos ({len(rows)} total)", total)
 
     async def _download_url_async(self, url: str, force: bool = False):
         parsed = parse_url(url)

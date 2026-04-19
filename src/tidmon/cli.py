@@ -21,20 +21,28 @@ from tidmon.core.utils.url import parse_url, TidalType
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
 def setup_logging(verbose: bool = False, debug: bool = False):
+    import sys
     level = logging.DEBUG if debug else (logging.INFO if verbose else logging.WARNING)
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s" if debug else "%(levelname)s: %(message)s"
-    logging.basicConfig(level=level, format=fmt)
+
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setLevel(level)
+    stream_handler.setFormatter(logging.Formatter(fmt))
+    try:
+        stream_handler.stream = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
+    except Exception:
+        pass
+    logging.basicConfig(level=level, format=fmt, handlers=[stream_handler])
 
     # File handler for errors (optional)
     try:
         log_dir = Path.home() / ".tidmon" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_dir / "tidmon.log")
-        file_handler.setLevel(logging.WARNING)  # Log warnings and errors to file
+        file_handler = logging.FileHandler(log_dir / "tidmon.log", encoding='utf-8')
+        file_handler.setLevel(logging.WARNING)
         file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         logging.getLogger().addHandler(file_handler)
     except Exception:
-        # Logging to file is optional; do not crash if it fails (e.g., due to permissions)
         pass
 
 
@@ -292,6 +300,16 @@ def download_track(ctx, track_id, force):
 def download_video(ctx, video_id, force):
     """Download a video by ID."""
     Download(verbose=ctx.obj.get('verbose', False), config=ctx.obj.get('config')).download_video(video_id, force=force)
+
+
+@download.command('pending-videos')
+@click.pass_context
+@click.option('--force', is_flag=True, default=False, help='Re-download even if file already exists on disk.')
+@click.option('--dry-run', is_flag=True, default=False, help='Show videos without downloading.')
+@click.option('--ignore-db', is_flag=True, default=False, help='Ignore DB status — download all videos not on disk regardless of downloaded flag.')
+def download_pending_videos(ctx, force, dry_run, ignore_db):
+    """Download all videos in the DB that have not been downloaded yet."""
+    Download(verbose=ctx.obj.get('verbose', False), config=ctx.obj.get('config')).download_pending_videos(force=force, dry_run=dry_run, ignore_db=ignore_db)
 
 
 @download.command('playlist')

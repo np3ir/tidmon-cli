@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.3.0] — 2026-04-19
+
+### Added
+
+- **`tidmon download pending-videos`** (`cli.py`, `cmd/download.py`)
+  — New command to download all videos in the DB that have not been downloaded yet.
+  - `--dry-run` — shows pending videos without downloading.
+  - `--force` — re-downloads even if file already exists on disk.
+  - `--ignore-db` — ignores `downloaded` flag in DB; downloads all videos not found on disk. Useful when the DB was seeded with `--register-videos` but files were never actually downloaded.
+
+### Fixed
+
+- **`'Video' object has no attribute 'version'`** (`core/utils/format.py`)
+  — `generate_template_data` now uses `getattr(..., None)` for Track-only fields
+  (`version`, `copyright`, `bpm`, `isrc`, `track_number`, `volume_number`) so it works
+  safely with `Video` objects.
+
+- **Video metadata now uses same MP4 atoms as music tracks** (`core/utils/metadata.py`)
+  — `add_video_metadata` now calls `add_m4a_metadata` directly, writing identical atoms
+  (`©nam`, `©ART`, `aART`, `©alb`, `©day`, `trkn`, `disk`). Previously used `EasyMP4`
+  with a different tag format.
+
+- **HLS video files with invalid MP4 structure** (`core/utils/metadata.py`)
+  — When mutagen can't open the file, `fix_mp4_faststart` is called via ffmpeg to remux
+  it before retrying metadata write.
+
+- **Video download progress display** (`cmd/download.py`, `core/downloader.py`)
+  — Videos now use the same `RichUI` panels as music downloads. HLS segment progress
+  shown as `N/Total` in the download bar. Live display runs for the entire session
+  (not restarted per video). Total progress bar counts all videos including skips.
+
+- **Unicode logging crash on Windows** (`cli.py`)
+  — Log stream handler now forces UTF-8 encoding to prevent `UnicodeEncodeError`
+  on cp1252 terminals when log messages contain non-ASCII characters (e.g., `→`).
+
+---
+
 ## [1.2.0] — 2026-04-17
 
 ### Added

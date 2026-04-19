@@ -188,6 +188,15 @@ tidmon refresh --download
 | `tidmon download video 123456` | Descarga un video por ID. |
 | `tidmon download video 123456 --force` | Re-descarga aunque ya esté en DB. |
 
+### `download pending-videos` — Videos pendientes de la DB
+
+| Comando | Qué hace |
+|---|---|
+| `tidmon download pending-videos` | Descarga todos los videos en DB con `downloaded=0`. |
+| `tidmon download pending-videos --dry-run` | Muestra los videos pendientes sin descargar. |
+| `tidmon download pending-videos --force` | Re-descarga aunque el archivo ya exista en disco. |
+| `tidmon download pending-videos --ignore-db` | Ignora el estado de la DB — descarga todos los videos que no existan en disco. Útil si la DB fue sembrada con `--register-videos` pero los archivos no fueron descargados. |
+
 ### `download playlist` — Tracks de una playlist
 
 | Comando | Qué hace |
