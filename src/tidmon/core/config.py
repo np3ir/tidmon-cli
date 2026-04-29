@@ -32,8 +32,9 @@ class Config:
             "default": str(Path.home() / "Music" / "tidmon"),
             "video": str(Path.home() / "Videos" / "tidmon")
         },
-        "concurrent_downloads": 2,
-        "requests_per_minute": 50,
+        "concurrent_downloads": 1,
+        "requests_per_minute": 20,
+        "track_delay": 3.0,
         "debug_mode": False,
         "monitor_interval_hours": 24,
         "artist_separator": ", ",

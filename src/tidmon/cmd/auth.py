@@ -142,8 +142,19 @@ class Auth:
         """Refreshes the access token using the saved refresh token."""
         loaded = load_auth_data()
 
-        if not loaded.refresh_token:
+        if not loaded.token:
             console.print("[bold red]Not logged in.")
+            return
+
+        # Web token: no refresh_token, just report expiry
+        if not loaded.refresh_token:
+            if loaded.expires_at and loaded.expires_at > int(time()):
+                console.print(
+                    f"[green]Auth token expires in {_format_remaining(loaded.expires_at)} "
+                    f"[dim](web token, no refresh)[/]"
+                )
+            else:
+                console.print("[yellow]Web token expired. Run 'tidmon auth web-login' to renew.")
             return
 
         safe_early_expire = max(0, early_expire)
@@ -168,3 +179,8 @@ class Auth:
         save_auth_data(loaded)
         console.print("[bold green]Auth token has been refreshed!")
         console.print(f"[green]Expires in {_format_remaining(loaded.expires_at)}")
+
+    def web_login(self):
+        """Login via browser — captures token automatically from tidal.com."""
+        from tidmon.core.web_login import web_login as _wl
+        _wl()

@@ -45,6 +45,7 @@ class TidalSession:
             try:
                 latest = load_auth_data()
                 if not latest.refresh_token:
+                    # Web token has no refresh_token — return None gracefully
                     return None
 
                 # Skip network refresh if token is still valid and not forced
@@ -69,7 +70,7 @@ class TidalSession:
         client = TidalClientImproved(
             token=auth_data.token,
             on_token_expiry=_on_token_expiry,
-            requests_per_minute=Config().get("requests_per_minute", 50),
+            requests_per_minute=Config().get("requests_per_minute", 20),
         )
 
         self.api = TidalAPI(

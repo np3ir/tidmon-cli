@@ -92,6 +92,12 @@ def auth_refresh(force, early_expire):
     Auth().refresh(force=force, early_expire=early_expire)
 
 
+@cli.command('web-login')
+def auth_web_login():
+    """Login via browser — captura token automáticamente de tidal.com."""
+    Auth().web_login()
+
+
 # ── monitor ───────────────────────────────────────────────────────────────────
 
 @cli.group()

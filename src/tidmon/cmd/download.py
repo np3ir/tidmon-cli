@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import random
 import sys
 from pathlib import Path
 from typing import Optional, List
@@ -393,6 +394,8 @@ class Download:
     # --- Private Asynchronous Methods (Core Logic) ---
 
     async def _download_album_async(self, album_id: int, force: bool = False, show_summary: bool = True) -> Counter:
+        from tidmon.core.web_login import auto_refresh_if_needed
+        await auto_refresh_if_needed(threshold_minutes=30)
         album = self.api.get_album(album_id)
         if not album:
             self.ui.print(f"[red]❌ Album {album_id} not found")
@@ -465,6 +468,14 @@ class Download:
 
         async def _download_one(task):
             async with _track_sem:
+                # Human-like delay before each track
+                _cfg_delay = self.config.get("track_delay", 3.0)
+                if _cfg_delay > 0:
+                    if random.random() < 0.15:
+                        await asyncio.sleep(random.uniform(_cfg_delay * 2, _cfg_delay * 6))
+                    else:
+                        await asyncio.sleep(random.uniform(0.5, max(0.5, _cfg_delay)))
+
                 # 1. Download audio file
                 await self.downloader.download_file(task, session)
 
@@ -498,6 +509,20 @@ class Download:
                             )
                         except Exception as e:
                             logger.error(f"Error applying metadata to {task.track_title}: {e}")
+
+                # Playback event — fire and forget
+                if task.status == DownloadStatus.COMPLETED:
+                    from tidmon.core.playback import report_playback
+                    track = track_map.get(task.track_id)
+                    asyncio.create_task(report_playback(
+                        session=session,
+                        track_id=task.track_id,
+                        duration=getattr(track, "duration", 240) if track else 240,
+                        audio_quality=getattr(task, "audio_quality", "LOSSLESS"),
+                        country_code=self.api.country_code,
+                        source_type="ALBUM",
+                        source_id=str(album_id),
+                    ))
 
         self.ui.start(total=len(tasks))
         for _ in skipped_tasks:
@@ -554,6 +579,10 @@ class Download:
                     logger.debug(f"Skipping Various Artists album: {album.title} ({album.id})")
                     continue
                 self.ui.print(f"[dim]-> ALBUM [{i}/{len(albums)}]")
+                if i > 1:
+                    _delay = random.uniform(5, 12)
+                    logger.debug(f"Waiting {_delay:.1f}s before next album...")
+                    await asyncio.sleep(_delay)
                 album_stats = await self._download_album_async(album.id, force=force)
                 global_stats.update(album_stats)
             if skipped_va:
@@ -567,6 +596,8 @@ class Download:
                 self.ui.print(f"\n[bold]🎥 Found {len(videos)} videos.[/] Starting download...\n")
                 for i, video in enumerate(videos, 1):
                     self.ui.print(f"[dim]-> VIDEO [{i}/{len(videos)}]")
+                    if i > 1:
+                        await asyncio.sleep(random.uniform(5, 12))
                     video_stats = await self._download_video_async(video.id, force=force)
                     global_stats.update(video_stats)
         
