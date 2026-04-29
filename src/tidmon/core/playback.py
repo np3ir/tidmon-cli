@@ -33,6 +33,7 @@ async def report_playback(
     """
     import aiohttp
     try:
+        connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
         now = datetime.now(timezone.utc)
         start = now - timedelta(seconds=duration)
         session_id = str(uuid.uuid4())
@@ -66,7 +67,7 @@ async def report_playback(
             ]
         }
 
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
             async with session.post(
                 EVENTS_URL,
                 json=payload,
