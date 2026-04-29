@@ -19,7 +19,7 @@ def _iso(dt: datetime) -> str:
 
 
 async def report_playback(
-    session,
+    headers: dict,
     track_id: int,
     duration: int,
     audio_quality: str,
@@ -31,8 +31,8 @@ async def report_playback(
     Fire-and-forget POST to TIDAL's events endpoint.
     Simulates a completed web player stream session.
     """
+    import aiohttp
     try:
-        import aiohttp as _aiohttp
         now = datetime.now(timezone.utc)
         start = now - timedelta(seconds=duration)
         session_id = str(uuid.uuid4())
@@ -66,13 +66,14 @@ async def report_playback(
             ]
         }
 
-        async with session.post(
-            EVENTS_URL,
-            json=payload,
-            params={"countryCode": country_code},
-            timeout=10,
-        ) as resp:
-            log.debug(f"Playback event for track {track_id}: HTTP {resp.status}")
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(
+                EVENTS_URL,
+                json=payload,
+                params={"countryCode": country_code},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                log.debug(f"Playback event for track {track_id}: HTTP {resp.status}")
 
     except Exception as e:
         log.debug(f"Playback event silently failed for track {track_id}: {e}")

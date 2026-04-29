@@ -515,7 +515,7 @@ class Download:
                     from tidmon.core.playback import report_playback
                     track = track_map.get(task.track_id)
                     asyncio.create_task(report_playback(
-                        session=session,
+                        headers=dict(self.api.client.session.headers),
                         track_id=task.track_id,
                         duration=getattr(track, "duration", 240) if track else 240,
                         audio_quality=getattr(task, "audio_quality", "LOSSLESS"),
