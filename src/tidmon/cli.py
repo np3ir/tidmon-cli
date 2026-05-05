@@ -201,6 +201,56 @@ def playlist_list(ctx):
         m.list_playlists()
 
 
+@monitor_playlist.command('export')
+@click.argument('url')
+@click.option('--output', '-o', default=None, help='Output CSV file (default: playlist_artists.csv)')
+@click.pass_context
+def playlist_export(ctx, url, output):
+    """Export all artists from a TIDAL playlist to a CSV file."""
+    import csv as _csv
+
+    parsed = parse_url(url)
+    if not parsed or parsed.tidal_type != TidalType.PLAYLIST:
+        click.echo(f"  [!] URL de playlist TIDAL invalida: {url}")
+        return
+
+    session = ctx.obj.get('session')
+    config  = ctx.obj.get('config')
+
+    from tidmon.cmd.monitor import Monitor
+    with Monitor(config=config, session=session) as m:
+        playlist = m.api.get_playlist(parsed.tidal_id)
+        if not playlist:
+            click.echo(f"  [!] No se encontro el playlist.")
+            return
+
+        click.echo(f"\n  Fetching playlist: {playlist.title}...")
+        tracks = m.api.get_playlist_items(parsed.tidal_id)
+        if not tracks:
+            click.echo("  Playlist vacio.")
+            return
+
+        click.echo(f"  {len(tracks)} tracks encontrados. Extrayendo artistas...")
+
+        seen, rows = set(), []
+        for track in tracks:
+            artists = track.artists if hasattr(track, 'artists') else []
+            for artist in artists:
+                aid = artist.id if hasattr(artist, 'id') else artist.get('id')
+                aname = artist.name if hasattr(artist, 'name') else artist.get('name', '')
+                if aid and aid not in seen:
+                    seen.add(aid)
+                    rows.append((aid, aname, f"https://tidal.com/artist/{aid}"))
+
+        out_path = output or f"playlist_artists.csv"
+        with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
+            w = _csv.writer(f)
+            w.writerow(["Artist ID", "Artist Name", "TIDDL"])
+            w.writerows(rows)
+
+        click.echo(f"\n  {len(rows)} artistas unicos exportados a: {out_path}")
+
+
 @monitor.command('export')
 @click.option('--output', '-o', default='tidmon_export.txt', show_default=True,
               help='Output file path.')
