@@ -316,11 +316,15 @@ def add_video_metadata(path: Path, video: Video) -> None:
             logger.warning(f"Skipping video metadata (remux failed): {path.name}")
             return
 
-    artists_str = ";".join([a.name.strip() for a in video.artists if a.name]) if video.artists else (video.artist.name if video.artist else "")
-    album_artist = video.artist.name if video.artist else artists_str
-    album_title  = video.album.title if video.album else ""
-    raw_date     = video.release_date or getattr(video, 'stream_start_date', None)
-    date_str     = raw_date.isoformat() if raw_date else None
+    _raw          = video.artists or []
+    _main         = sorted([a.name for a in _raw if getattr(a, 'type', None) == "MAIN"     and a.name])
+    _feat         = sorted([a.name for a in _raw if getattr(a, 'type', None) == "FEATURED" and a.name])
+    artists_list  = (_main + _feat) or [a.name for a in _raw if a.name] or (
+                        [video.artist.name] if video.artist and video.artist.name else ["Unknown Artist"])
+    album_artist  = video.artist.name if video.artist else artists_list[0]
+    album_title   = video.album.title if video.album else ""
+    raw_date      = video.release_date or getattr(video, 'stream_start_date', None)
+    date_str      = raw_date.isoformat() if raw_date else None
 
     add_m4a_metadata(
         track_path   = path,
@@ -329,7 +333,7 @@ def add_video_metadata(path: Path, video: Video) -> None:
         disc_number  = str(video.volume_number or 0),
         album_title  = album_title,
         album_artist = album_artist,
-        artists      = artists_str,
+        artists      = artists_list,
         date         = date_str,
         copyright_str= None,
         comment      = None,

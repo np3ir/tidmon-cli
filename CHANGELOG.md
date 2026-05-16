@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-05-16
+
+### Fixed
+
+- **Video ARTIST tag: multi-value list** (`core/utils/metadata.py`)
+  — `add_video_metadata()` now builds a sorted MAIN+FEATURED artist list and passes it
+  to `add_m4a_metadata()` as a list (multi-value `©ART` atom). Previously used
+  `";".join(...)` — a semicolon-separated single string inconsistent with music tracks
+  and other downloaders.
+
+---
+
 ## [Unreleased] — 2026-05-15
 
 ### Changed
