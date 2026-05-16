@@ -22,7 +22,7 @@ MAX_COMPONENT_LEN  = 250   # alias used in sanitize_filename
 # Single source of truth for the artist separator default.
 # Used by generate_template_data, format_path, add_track_metadata, and
 # all config.get("artist_separator", ...) call-sites.
-DEFAULT_ARTIST_SEPARATOR = ", "
+DEFAULT_ARTIST_SEPARATOR = " / "
 RESERVED_BYTE_COUNT = 50   # bytes reserved for downloader suffixes (.flac.part.<hash>)
 
 # ============================================================

@@ -37,17 +37,17 @@ class Config:
         "track_delay": 3.0,
         "debug_mode": False,
         "monitor_interval_hours": 24,
-        "artist_separator": ", ",
+        "artist_separator": " / ",
         "templates": {
             "default": (
                 "{artist_initials}/{album.artist}"
-                "/({album.date:%Y-%m-%d}) {album.title} ({album.release})"
+                "/({album.date:%Y}) {album.title} ({album.release})"
                 "/{item.number}. {item.artists_with_features}"
                 " - {item.title_version} {item.explicit:shortparens}"
             ),
             "video": (
                 "{artist_initials}/{album.artist}"
-                "/({item.releaseDate:%Y-%m-%d}) {item.artists_with_features}"
+                "/({item.releaseDate:%Y}) {item.artists_with_features}"
                 " - {item.title_version} {item.explicit:shortparens}"
             ),
             "playlist": (

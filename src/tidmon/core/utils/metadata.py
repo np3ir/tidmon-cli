@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import unicodedata
 import logging
-from typing import Optional, List
+from typing import Optional, List, Union
 
 try:
     from mutagen.flac import FLAC as MutagenFLAC, Picture
@@ -53,7 +53,7 @@ def add_flac_metadata(
     disc_number: str,
     album_title: str,
     album_artist: str,
-    artists: str,
+    artists: Union[str, List[str]],
     date: Optional[str],
     copyright_str: Optional[str],
     isrc: Optional[str],
@@ -92,7 +92,7 @@ def add_flac_metadata(
             "DISCNUMBER":  disc_number,
             "ALBUM":       album_title,
             "ALBUMARTIST": album_artist,
-            "ARTIST":      artists,
+            "ARTIST":      artists if isinstance(artists, list) else [artists],
             "DATE":        str(year) if year else "",   # FIX 1: year only, e.g. "2023"
             "COPYRIGHT":   copyright_str or "",
             "ISRC":        isrc or "",
@@ -132,7 +132,7 @@ def add_m4a_metadata(
     disc_number: str,
     album_title: str,
     album_artist: str,
-    artists: str,
+    artists: Union[str, List[str]],
     date: Optional[str],
     copyright_str: Optional[str],
     comment: Optional[str],
@@ -164,7 +164,7 @@ def add_m4a_metadata(
     mp4["\xa9nam"] = title
     mp4["\xa9alb"] = album_title
     mp4["aART"]    = album_artist
-    mp4["\xa9ART"] = artists
+    mp4["\xa9ART"] = artists if isinstance(artists, list) else [artists]
 
     # FIX 3: Store only the year in ©day (iTunes/Apple Music/Windows expects "2023")
     year = _parse_year(date)
@@ -222,8 +222,12 @@ def add_track_metadata(
       - Source:  album.release_date  (date object or ISO string)
       - Storage: year-only string in both DATE (FLAC) and ©day (M4A)
     """
-    # Build artists string via shared helper — keeps metadata consistent with filename template.
-    artists_str      = build_artist_string(track, artist_separator)
+    # Build artists string (for filename) and list (for multi-value tags — tiddl/Orpheus parity).
+    artists_str  = build_artist_string(track, artist_separator)
+    _raw         = track.artists or []
+    _main        = sorted([a.name for a in _raw if a.type == "MAIN"     and a.name])
+    _feat        = sorted([a.name for a in _raw if a.type == "FEATURED" and a.name])
+    artists_list = (_main + _feat) or [artists_str]
     album_artist_str = album.artist.name if album.artist else "Unknown Artist"
 
     # Build title including version so it matches {item.title_version} used in the filename template
@@ -249,7 +253,7 @@ def add_track_metadata(
         disc_number  = str(track.volume_number),
         album_title  = album.title,
         album_artist = album_artist_str,
-        artists      = artists_str,
+        artists      = artists_list,
         date         = release_date_str,
         copyright_str= track.copyright,
         comment      = comment,

@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-05-15
+
+### Changed
+
+- **Folder date format: year only** (`core/config.py`)
+  — Album folders now use `({year})` instead of `({YYYY-MM-DD})` to match OrpheusDL and
+  streamrip output. Example: `A/Aitana/(2025) CUARTO AZUL (ALBUM)/` instead of
+  `A/Aitana/(2025-05-15) CUARTO AZUL (ALBUM)/`. Applies to both audio and video templates.
+
+- **Artist separator unified to ` / `** (`core/config.py`, `core/utils/format.py`)
+  — Default artist separator changed from `, ` to ` / `, which the filename sanitizer
+  converts to the fullwidth `／` (U+FF0F). Files now read `Reik ／ Ozuna ／ Wisin`
+  instead of `Reik, Ozuna, Wisin` — consistent with tiddl and OrpheusDL output.
+
+- **Multi-value ARTIST tag** (`core/utils/metadata.py`)
+  — ARTIST tag in FLAC (Vorbis Comment) and M4A (`©ART` atom) is now written as a list
+  of individual artist names instead of a single joined string. Each artist gets its own
+  tag entry (e.g. `ARTIST=Reik`, `ARTIST=Ozuna`, `ARTIST=Wisin`). Tag readers that
+  support multi-value display them correctly; others join with their own separator.
+  Consistent with tiddl and OrpheusDL behavior.
+
+---
+
 ## [1.3.0] — 2026-04-19
 
 ### Added
