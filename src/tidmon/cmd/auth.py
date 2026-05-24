@@ -1,11 +1,13 @@
 import logging
 import webbrowser
 from datetime import timedelta
+from pathlib import Path
 from time import time, sleep
+from typing import Optional
 
 from rich.console import Console
 
-from tidmon.core.auth_client import AuthAPI, load_auth_data, save_auth_data
+from tidmon.core.auth_client import AuthAPI, load_auth_data, save_auth_data, TV_CREDENTIALS, get_auth_api_for
 from tidmon.core.auth_exceptions import AuthClientError
 from tidmon.core.auth_models import AuthData
 
@@ -27,7 +29,7 @@ class Auth:
     """Handles authentication using tiddl's AuthAPI + AuthData pattern."""
 
     def __init__(self):
-        self.auth_api = AuthAPI()
+        self.auth_api = AuthAPI(credentials=TV_CREDENTIALS)
 
     def login(self):
         """Initiates the device authentication flow."""
@@ -77,6 +79,7 @@ class Auth:
                         expires_at=auth.expires_in + int(time()),
                         user_id=str(auth.user_id),
                         country_code=auth.user.countryCode,
+                        client_id=TV_CREDENTIALS.client_id,
                     )
                     save_auth_data(auth_data)
                     status.console.print("[bold green]Logged in!")
@@ -165,7 +168,8 @@ class Auth:
             return
 
         try:
-            auth = self.auth_api.refresh_token(loaded.refresh_token)
+            api = get_auth_api_for(loaded.client_id)
+            auth = api.refresh_token(loaded.refresh_token)
         except Exception as e:
             logger.error(f"Token refresh failed: {e}", exc_info=True)
             console.print(f"[bold red]Failed to refresh token: {e}")
@@ -184,3 +188,108 @@ class Auth:
         """Login via browser — captures token automatically from tidal.com."""
         from tidmon.core.web_login import web_login as _wl
         _wl()
+
+    def mobile_login(self, atmos: bool = False):
+        """Login with username/password (mobile OAuth fallback)."""
+        from tidmon.core.auth_client import MobileAuthClient, MOBILE_ATMOS_CLIENT_ID
+        import click
+
+        loaded = load_auth_data()
+        if loaded.token:
+            console.print("[cyan bold]Already logged in. Run 'tidmon logout' first.")
+            return
+
+        username = click.prompt("TIDAL email")
+        password = click.prompt("Password", hide_input=True)
+
+        client_id = MOBILE_ATMOS_CLIENT_ID if atmos else None
+        mobile = MobileAuthClient(client_id=client_id) if client_id else MobileAuthClient()
+
+        with console.status("Authenticating..."):
+            try:
+                data = mobile.auth(username, password)
+            except AuthClientError as e:
+                console.print(f"[bold red]Authentication failed: {e.error} — {e.error_description}")
+                return
+
+        auth_data = AuthData(
+            token=data["access_token"],
+            refresh_token=data.get("refresh_token"),
+            expires_at=data.get("expires_in", 86400) + int(time()),
+            user_id=str(data.get("user_id", "")),
+            country_code=data.get("country_code", ""),
+            client_id=mobile.client_id,
+        )
+        save_auth_data(auth_data)
+        console.print(f"[bold green]Logged in via Mobile OAuth! User: {auth_data.user_id} ({auth_data.country_code})")
+
+    def import_orpheus(self, path: Optional[Path] = None):
+        """Import TIDAL session from OrpheusDL loginstorage.bin."""
+        import pickle
+
+        search_dirs = [path, Path("C:/OrpheusDL"), Path.home() / "OrpheusDL"]
+        bin_path: Optional[Path] = None
+        for d in search_dirs:
+            if d:
+                candidate = d / "config" / "loginstorage.bin"
+                if candidate.exists():
+                    bin_path = candidate
+                    break
+
+        if not bin_path:
+            console.print("[bold red]Could not find loginstorage.bin. Use --path to specify the OrpheusDL directory.")
+            return
+
+        try:
+            with bin_path.open("rb") as f:
+                storage = pickle.load(f)
+            sessions = storage["modules"]["tidal"]["sessions"]["default"]["custom_data"]["sessions"]
+        except Exception as e:
+            console.print(f"[bold red]Failed to read Orpheus session storage: {e}")
+            return
+
+        session = sessions.get("TV") or sessions.get("MOBILE_DEFAULT")
+        if not session or not session.get("refresh_token"):
+            console.print("[bold red]No valid TIDAL session with refresh_token found in OrpheusDL storage.")
+            return
+
+        refresh_tok: str = session["refresh_token"]
+        user_id = str(session.get("user_id", ""))
+        country_code = str(session.get("country_code", ""))
+
+        with console.status("Refreshing token with TV credentials..."):
+            try:
+                from tidmon.core.auth_client import AuthAPI, TV_CREDENTIALS
+                raw = AuthAPI(credentials=TV_CREDENTIALS)._session.post(
+                    "https://auth.tidal.com/v1/oauth2/token",
+                    data={
+                        "client_id": TV_CREDENTIALS.client_id,
+                        "client_secret": TV_CREDENTIALS.client_secret,
+                        "refresh_token": refresh_tok,
+                        "grant_type": "refresh_token",
+                    },
+                    auth=TV_CREDENTIALS.to_tuple(),
+                )
+                raw.raise_for_status()
+                raw = raw.json()
+                auth_data = AuthData(
+                    token=raw["access_token"],
+                    refresh_token=raw.get("refresh_token", refresh_tok),
+                    expires_at=raw.get("expires_in", 86400) + int(time()),
+                    user_id=user_id,
+                    country_code=country_code,
+                    client_id=TV_CREDENTIALS.client_id,
+                )
+            except Exception as e:
+                console.print(f"[yellow]Refresh failed ({e}), saving with stale access token.")
+                auth_data = AuthData(
+                    token=session.get("access_token", ""),
+                    refresh_token=refresh_tok,
+                    expires_at=0,
+                    user_id=user_id,
+                    country_code=country_code,
+                    client_id=TV_CREDENTIALS.client_id,
+                )
+
+        save_auth_data(auth_data)
+        console.print(f"[bold green]Orpheus session imported! User: {auth_data.user_id} ({auth_data.country_code})")

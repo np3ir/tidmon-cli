@@ -1,11 +1,14 @@
 import base64
+import hashlib
 import json
 import logging
+import secrets
 import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from requests import Session, HTTPError
+from urllib.parse import urlparse, parse_qs, quote
+from requests import Session, HTTPError, request as req
 from typing import Callable, Optional
 
 from .auth_exceptions import AuthClientError
@@ -193,6 +196,14 @@ _DEFAULT_B64 = (
     "WFBQTEhWWEF2eEFnPQ=="
 )
 
+TV_CREDENTIALS = TidalCredentials(
+    client_id="4N3n6Q1x95LL5K7p",
+    client_secret="oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik=",
+)
+
+MOBILE_ATMOS_CLIENT_ID = "km8T1xS355y7dd3H"
+MOBILE_DEFAULT_CLIENT_ID = "6BDSRdpK9hqEBTgU"
+
 
 def get_default_client_id() -> str:
     """Returns the default client_id for x-tidal-token fallback."""
@@ -258,11 +269,18 @@ def save_auth_data(auth_data: AuthData) -> None:
 _AUTH_URL = "https://auth.tidal.com/v1/oauth2"
 
 
+def get_auth_api_for(client_id: str | None) -> "AuthAPI":
+    """Returns AuthAPI with correct credentials based on stored client_id."""
+    if client_id and client_id == TV_CREDENTIALS.client_id:
+        return AuthAPI(credentials=TV_CREDENTIALS)
+    return AuthAPI()
+
+
 class AuthAPI:
     """High-level auth wrapper that returns typed pydantic models."""
 
-    def __init__(self) -> None:
-        self._credentials = TidalCredentials.from_base64(_DEFAULT_B64)
+    def __init__(self, credentials: TidalCredentials | None = None) -> None:
+        self._credentials = credentials or TV_CREDENTIALS
         self._session = Session()
 
     def get_device_auth(self) -> AuthDeviceResponse:
@@ -319,3 +337,119 @@ class AuthAPI:
         if not res.ok:
             body = res.text[:200]
             logger.warning("TIDAL logout failed: status=%s, body=%s", res.status_code, body)
+
+
+class MobileAuthClient:
+    """TIDAL Mobile OAuth2 with PKCE (username/password flow, ported from OrpheusDL)."""
+
+    _LOGIN_BASE = "https://login.tidal.com/api/"
+    _USER_AGENT = (
+        "Mozilla/5.0 (Linux; Android 13; Pixel 8 Build/TQ2A.230505.002; wv) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/119.0.6045.163 "
+        "Mobile Safari/537.36"
+    )
+    _REDIRECT_URI = "https://tidal.com/android/login/auth"
+
+    def __init__(self, client_id: str = MOBILE_DEFAULT_CLIENT_ID):
+        self.client_id = client_id
+        self._code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=")
+        self._code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(self._code_verifier).digest()
+        ).rstrip(b"=")
+        self._client_unique_key = secrets.token_hex(8)
+
+    def auth(self, username: str, password: str) -> dict:
+        """Login with username/password. Returns raw token dict with user_id and country_code."""
+        s = Session()
+        params = {
+            "response_type": "code",
+            "redirect_uri": self._REDIRECT_URI,
+            "lang": "en_US",
+            "appMode": "android",
+            "client_id": self.client_id,
+            "client_unique_key": self._client_unique_key,
+            "code_challenge": self._code_challenge,
+            "code_challenge_method": "S256",
+            "restrict_signup": "true",
+        }
+        common = {
+            "User-Agent": self._USER_AGENT,
+            "Accept-Language": "en-US",
+            "X-Requested-With": "com.aspiro.tidal",
+        }
+
+        r = s.get("https://login.tidal.com/authorize", params=params, headers=common)
+        if r.status_code == 400:
+            raise AuthClientError(status=400, error="auth_failed", error_description="Invalid client_id")
+        if r.status_code == 403:
+            raise AuthClientError(status=403, error="bot_protection", error_description="Bot protection triggered, try again later")
+
+        dd = s.post("https://dd.tidal.com/js/", data={
+            "jsData": f'{{"opts":"endpoint,ajaxListenerPath","ua":"{self._USER_AGENT}"}}',
+            "ddk": "1F633CDD8EF22541BD6D9B1B8EF13A",
+            "Referer": quote(r.url),
+            "responsePage": "origin",
+            "ddv": "4.17.0",
+        }, headers={"User-Agent": self._USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"})
+        if dd.status_code != 200 or not dd.json().get("cookie"):
+            raise AuthClientError(status=403, error="bot_protection", error_description="Could not obtain DataDome cookie")
+        raw_cookie = dd.json()["cookie"].split(";")[0]
+        s.cookies[raw_cookie.split("=")[0]] = raw_cookie.split("=")[1]
+
+        csrf = s.cookies.get("_csrf-token", "")
+        json_h = {**common, "X-CSRF-Token": csrf, "Accept": "application/json, text/plain, */*", "Content-Type": "application/json"}
+
+        r = s.post(self._LOGIN_BASE + "email", params=params, json={"email": username}, headers=json_h)
+        if r.status_code != 200:
+            raise AuthClientError(status=r.status_code, error="email_check_failed", error_description=r.text)
+        if not r.json().get("isValidEmail"):
+            raise AuthClientError(status=400, error="invalid_email", error_description="Invalid email address")
+        if r.json().get("newUser"):
+            raise AuthClientError(status=400, error="user_not_found", error_description="User does not exist")
+
+        r = s.post(self._LOGIN_BASE + "email/user/existing", params=params,
+                   json={"email": username, "password": password}, headers=json_h)
+        if r.status_code != 200:
+            raise AuthClientError(status=r.status_code, error="login_failed", error_description=r.text)
+
+        r = s.get("https://login.tidal.com/success", allow_redirects=False, headers=common)
+        if r.status_code == 401:
+            raise AuthClientError(status=401, error="wrong_password", error_description="Incorrect password")
+        if r.status_code != 302:
+            raise AuthClientError(status=r.status_code, error="auth_failed", error_description="Expected redirect after login")
+        oauth_code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+
+        r = req("POST", "https://auth.tidal.com/v1/oauth2/token", data={
+            "code": oauth_code,
+            "client_id": self.client_id,
+            "grant_type": "authorization_code",
+            "redirect_uri": self._REDIRECT_URI,
+            "scope": "r_usr w_usr w_sub",
+            "code_verifier": self._code_verifier,
+            "client_unique_key": self._client_unique_key,
+        }, headers={"User-Agent": self._USER_AGENT})
+        if r.status_code != 200:
+            raise AuthClientError(status=r.status_code, error="token_exchange_failed", error_description=r.text)
+        data = r.json()
+
+        r = req("GET", "https://api.tidal.com/v1/sessions", headers={
+            "Authorization": f"Bearer {data['access_token']}",
+            "X-Tidal-Token": self.client_id,
+            "User-Agent": "TIDAL_ANDROID/1039 okhttp/3.14.9",
+        })
+        if r.status_code == 200:
+            sess = r.json()
+            data["user_id"] = sess["userId"]
+            data["country_code"] = sess["countryCode"]
+
+        return data
+
+    def refresh(self, refresh_token: str) -> dict:
+        """Refresh a mobile token (no client secret needed)."""
+        r = req("POST", "https://auth.tidal.com/v1/oauth2/token", data={
+            "refresh_token": refresh_token,
+            "client_id": self.client_id,
+            "grant_type": "refresh_token",
+        })
+        r.raise_for_status()
+        return r.json()

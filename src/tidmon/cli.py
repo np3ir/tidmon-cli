@@ -98,6 +98,21 @@ def auth_web_login():
     Auth().web_login()
 
 
+@cli.command('mobile-login')
+@click.option('--atmos', is_flag=True, help='Use Mobile Atmos client (km8T1xS355y7dd3H).')
+def auth_mobile_login(atmos):
+    """Login with username and password (mobile OAuth, fallback)."""
+    Auth().mobile_login(atmos=atmos)
+
+
+@cli.command('import-orpheus')
+@click.option('--path', '-p', type=click.Path(exists=True, file_okay=False, path_type=Path),
+              default=None, help='OrpheusDL directory (default: C:/OrpheusDL).')
+def auth_import_orpheus(path):
+    """Import TIDAL session from OrpheusDL loginstorage.bin."""
+    Auth().import_orpheus(path=path)
+
+
 # ── monitor ───────────────────────────────────────────────────────────────────
 
 @cli.group()
