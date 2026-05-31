@@ -1,5 +1,6 @@
 import logging
 import smtplib
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -57,6 +58,7 @@ class Refresh:
             register_videos: bool = False,
             video_since: str = None,
             video_until: str = None,
+            artist_delay: float = 3.0,
     ):
         """Refresh monitored content and detect new releases."""
         try:
@@ -69,7 +71,7 @@ class Refresh:
                 return
 
             if refresh_artists:
-                self._refresh_artists(artist_id, artist, since, until, album_since, album_until)
+                self._refresh_artists(artist_id, artist, since, until, album_since, album_until, artist_delay)
 
             if refresh_playlists:
                 self._refresh_all_playlists()
@@ -95,7 +97,7 @@ class Refresh:
             print(f"\n❌ Error: {e}")
             print("   Run 'tidmon auth' to log in.")
 
-    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until):
+    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until, artist_delay: float = 3.0):
         if artist_id:
             artists = [self.db.get_artist(artist_id)]
             if not artists[0]:
@@ -117,8 +119,10 @@ class Refresh:
         console.print(f"\n{'=' * 60}")
         console.print(f"  REFRESHING {len(artists)} ARTIST(S)")
         console.print(f"{'=' * 60}\n")
-        for artist_obj in artists:
+        for i, artist_obj in enumerate(artists):
             self._refresh_artist(artist_obj, album_since, album_until)
+            if artist_delay > 0 and i < len(artists) - 1:
+                time.sleep(artist_delay)
 
     def _refresh_artist(self, artist: dict, album_since: str = None, album_until: str = None):
         artist_id = artist['artist_id']

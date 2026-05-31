@@ -16,6 +16,7 @@ from tidmon.cmd.search import Search
 from tidmon.cmd.show import Show
 from tidmon.cmd.config import ConfigCommand
 from tidmon.cmd.backup import Backup
+from tidmon.cmd.xref import Xref
 from tidmon.core.utils.url import parse_url, TidalType
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -293,8 +294,10 @@ def monitor_export(ctx, output):
 @click.option('--until', default=None, help='Only refresh artists added until date (YYYY-MM-DD).')
 @click.option('--album-since', default=None, help='Only process albums released after this date (YYYY-MM-DD).')
 @click.option('--album-until', default=None, help='Only process albums released before this date (YYYY-MM-DD).')
+@click.option('--artist-delay', default=3.0, show_default=True, type=float,
+              help='Seconds to wait between artists (0 to disable).')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay):
     """Check monitored artists for new releases."""
     with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as r:
         r.refresh(
@@ -312,6 +315,7 @@ def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, vide
             until=until,
             album_since=album_since,
             album_until=album_until,
+            artist_delay=artist_delay,
         )
 
 
@@ -592,6 +596,85 @@ def backup_delete(ctx, path, keep_last):
     """Delete a backup or trim old ones."""
     with Backup(config=ctx.obj.get('config')) as b:
         b.delete(backup_path=path, keep_last=keep_last)
+
+
+# ── xref ──────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def xref():
+    """Cross-reference artist IDs across Qobuz, Apple Music, Deezer and MusicBrainz."""
+    pass
+
+
+@xref.command('enrich')
+@click.option('--odesli-db', default=None, type=click.Path(path_type=Path),
+              metavar='PATH', help='Ruta al odesli music.db (default: ~/.odesli/music.db).')
+@click.option('--mb/--no-mb', default=True, show_default=True,
+              help='Usar MusicBrainz para completar IDs faltantes.')
+@click.option('--qobuz/--no-qobuz', default=False, show_default=True,
+              help='Buscar IDs de Qobuz via API (requiere --qobuz-app-id y --qobuz-token).')
+@click.option('--qobuz-app-id', default=None, envvar='QOBUZ_APP_ID', metavar='ID',
+              help='Qobuz app_id (o variable QOBUZ_APP_ID).')
+@click.option('--qobuz-token', default=None, envvar='QOBUZ_TOKEN', metavar='TOKEN',
+              help='Qobuz user auth token (o variable QOBUZ_TOKEN).')
+@click.option('--limit', default=None, type=int, metavar='N',
+              help='Limitar a los primeros N artistas (útil para pruebas).')
+@click.option('--mb-delay', default=1.1, show_default=True, type=float,
+              help='Segundos entre requests a MusicBrainz (mínimo recomendado: 1.0).')
+@click.option('--qobuz-delay', default=0.5, show_default=True, type=float,
+              help='Segundos entre búsquedas en Qobuz.')
+def xref_enrich(odesli_db, mb, qobuz, qobuz_app_id, qobuz_token, limit, mb_delay, qobuz_delay):
+    """Enrich the xref DB with IDs from odesli, MusicBrainz and Qobuz.
+
+    \b
+    Fuentes usadas (en orden):
+      1. odesli DB   -- Apple Music, Deezer, Spotify (sin API calls)
+      2. MusicBrainz -- MBID + URL relationships -> Qobuz/Deezer/Apple
+      3. Qobuz API   -- busqueda por nombre para IDs restantes
+
+    \b
+    Ejemplos:
+      tidmon xref enrich
+      tidmon xref enrich --no-mb --limit 100
+      tidmon xref enrich --qobuz --qobuz-app-id 123 --qobuz-token abc
+    """
+    with Xref() as x:
+        x.enrich(
+            odesli_db=odesli_db,
+            use_mb=mb,
+            use_qobuz=qobuz,
+            qobuz_app_id=qobuz_app_id,
+            qobuz_token=qobuz_token,
+            limit=limit,
+            mb_delay=mb_delay,
+            qobuz_delay=qobuz_delay,
+        )
+
+
+@xref.command('export')
+@click.option('--output', '-o', default='artist_xref.csv', show_default=True,
+              type=click.Path(path_type=Path), help='Archivo CSV de salida.')
+@click.option('--platform', '-p', 'platforms', multiple=True,
+              type=click.Choice(['qobuz', 'apple', 'deezer', 'spotify', 'mb'], case_sensitive=False),
+              help='Plataformas a incluir (default: todas). Puede repetirse.')
+def xref_export(output, platforms):
+    """Export the xref table to a CSV file.
+
+    \b
+    Ejemplos:
+      tidmon xref export
+      tidmon xref export -o mis_artistas.csv
+      tidmon xref export -p qobuz -p deezer
+    """
+    with Xref() as x:
+        x.export(output=output, platform_filter=list(platforms))
+
+
+@xref.command('show')
+def xref_show():
+    """Show xref coverage by platform."""
+    with Xref() as x:
+        x.show()
 
 
 # ── reset ─────────────────────────────────────────────────────────────────────
