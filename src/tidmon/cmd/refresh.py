@@ -58,7 +58,7 @@ class Refresh:
             register_videos: bool = False,
             video_since: str = None,
             video_until: str = None,
-            artist_delay: float = 3.0,
+            artist_delay: float = 0.0,
     ):
         """Refresh monitored content and detect new releases."""
         try:
@@ -97,7 +97,7 @@ class Refresh:
             print(f"\n❌ Error: {e}")
             print("   Run 'tidmon auth' to log in.")
 
-    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until, artist_delay: float = 3.0):
+    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until, artist_delay: float = 0.0):
         if artist_id:
             artists = [self.db.get_artist(artist_id)]
             if not artists[0]:
@@ -124,6 +124,24 @@ class Refresh:
             if artist_delay > 0 and i < len(artists) - 1:
                 time.sleep(artist_delay)
 
+    def _album_filters(self) -> list:
+        """Map configured record_types → the TIDAL catalogue filters we must query.
+
+        Each filter is a separate paginated request. If the user doesn't monitor a
+        category (e.g. COMPILATION), skipping its filter saves one API round-trip per
+        artist with no change in results (those albums were discarded anyway). Falls
+        back to all filters if record_types is empty/unrecognised.
+        """
+        types = {t.upper() for t in self.config.record_types()}
+        filters = []
+        if "ALBUM" in types:
+            filters.append("ALBUMS")
+        if "EP" in types or "SINGLE" in types:
+            filters.append("EPSANDSINGLES")
+        if "COMPILATION" in types:
+            filters.append("COMPILATIONS")
+        return filters or ["ALBUMS", "EPSANDSINGLES", "COMPILATIONS"]
+
     def _refresh_artist(self, artist: dict, album_since: str = None, album_until: str = None):
         artist_id = artist['artist_id']
         artist_name = artist['artist_name']
@@ -131,22 +149,33 @@ class Refresh:
         logger.info(f"Refreshing: {artist_name}")
         console.print(f"  [dim]-[/] {artist_name}...", end='')
 
-        api_albums = self.api.get_artist_albums(artist_id)
+        # Parse --album-since up-front so we can hand it to the API as an
+        # early-termination hint: the catalogue endpoint returns albums
+        # newest-first, so it can stop paginating once it walks past this date
+        # instead of pulling an artist's entire back-catalogue every refresh.
+        since_date = None
+        if album_since:
+            try:
+                since_date = datetime.strptime(album_since, "%Y-%m-%d").date()
+            except ValueError:
+                logger.error("Invalid --album-since date format. Use YYYY-MM-DD.")
+                print("  (invalid date format)")
+                return
+
+        api_albums = self.api.get_artist_albums(
+            artist_id, filters=self._album_filters(), released_since=since_date
+        )
 
         if api_albums is None:
             console.print(f"  [red]x[/] API error (skipped, will retry next refresh)")
             logger.warning(f"API returned no data for {artist_name} (ID: {artist_id}) — not updating check time")
             return
 
-        # Filter albums by release date if options are provided
-        if album_since:
-            try:
-                since_date = datetime.strptime(album_since, "%Y-%m-%d").date()
-                api_albums = [a for a in api_albums if a.release_date and a.release_date.date() >= since_date]
-            except ValueError:
-                logger.error("Invalid --album-since date format. Use YYYY-MM-DD.")
-                print("  (invalid date format)")
-                return
+        # Date-filter the collected albums. This stays as the correctness
+        # guarantee — the API early-termination is only an optimisation and may
+        # return a few extra (older) items from the final page it fetched.
+        if since_date:
+            api_albums = [a for a in api_albums if a.release_date and a.release_date.date() >= since_date]
 
         if album_until:
             try:

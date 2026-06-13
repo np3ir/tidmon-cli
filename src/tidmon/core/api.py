@@ -3,6 +3,7 @@ import time
 import random
 import logging
 import requests as _requests
+from datetime import date
 from typing import Literal, TypeAlias, Any, List, Optional
 
 from requests.exceptions import (
@@ -182,12 +183,20 @@ class TidalAPI:
         log.debug(f"v1 get_artist failed for {artist_id}, trying v2 fallback...")
         return self._get_artist_v2(artist_id)
 
-    def get_artist_albums(self, artist_id: int) -> Optional[List[Album]]:
+    def get_artist_albums(
+        self, artist_id: int, filters: Optional[List[str]] = None,
+        released_since: Optional[date] = None,
+    ) -> Optional[List[Album]]:
         all_items = []
         seen_ids: set = set()
         any_success = False
 
-        for f in ["ALBUMS", "EPSANDSINGLES", "COMPILATIONS"]:
+        # Only query the catalogue filters the caller actually needs. Each filter
+        # is a separate (paginated) request, so skipping e.g. COMPILATIONS when the
+        # user doesn't monitor compilations removes a full API round-trip per artist.
+        filter_list = filters or ["ALBUMS", "EPSANDSINGLES", "COMPILATIONS"]
+
+        for f in filter_list:
             offset = 0
             filter_success = False
             while True:
@@ -212,6 +221,19 @@ class TidalAPI:
 
                     if (offset + len(result.items)) >= result.total_number_of_items:
                         break
+
+                    # Early-termination: the endpoint returns albums newest-first
+                    # (verified). Once an *entire* page is older than released_since,
+                    # every remaining page is older too — stop paging this filter.
+                    # Using the page's newest date (a full-page margin) keeps minor
+                    # intra-page disorder from dropping a qualifying release; the
+                    # caller still date-filters the items we did collect.
+                    if released_since:
+                        page_dates = [it.release_date.date() for it in result.items
+                                      if it.release_date]
+                        if page_dates and max(page_dates) < released_since:
+                            break
+
                     offset += len(result.items)
                 except Exception:
                     break

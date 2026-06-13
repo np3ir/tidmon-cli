@@ -294,8 +294,10 @@ def monitor_export(ctx, output):
 @click.option('--until', default=None, help='Only refresh artists added until date (YYYY-MM-DD).')
 @click.option('--album-since', default=None, help='Only process albums released after this date (YYYY-MM-DD).')
 @click.option('--album-until', default=None, help='Only process albums released before this date (YYYY-MM-DD).')
-@click.option('--artist-delay', default=3.0, show_default=True, type=float,
-              help='Seconds to wait between artists (0 to disable).')
+@click.option('--artist-delay', default=0.0, show_default=True, type=float,
+              help='Extra seconds to wait between artists. Usually unnecessary: the HTTP '
+                   'client already paces every request globally (requests_per_minute). '
+                   'Only raise this if you keep hitting 429s after lowering rpm.')
 @click.pass_context
 def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay):
     """Check monitored artists for new releases."""
