@@ -17,3 +17,8 @@ src/tidmon_cli.egg-info/
 
 # Claude IDE settings
 .claude/
+
+# build artifacts & local backups (added 2026-06-12)
+build/
+dist/
+*.bak_*
