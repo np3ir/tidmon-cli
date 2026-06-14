@@ -80,6 +80,9 @@ tidmon [OPTIONS] COMMAND [ARGS]...
 | `--register-videos` | Detect new videos and register them in the DB as known. No download. |
 | `--video-since YYYY-MM-DD` | With video flags: only check artists added after this date. |
 | `--video-until YYYY-MM-DD` | With video flags: only check artists added before this date. |
+| `--resume` | Resume an interrupted refresh: skip artists checked in the last 18h. |
+| `--stale-hours N` | Only refresh artists not checked in the last N hours (or never). Resume/chunk precisely. |
+| `--max-artists N` | Process at most N artists this run (volume cap to avoid bot-detection on huge runs). |
 
 ### Combinations — Ver sin descargar
 
@@ -91,6 +94,17 @@ tidmon [OPTIONS] COMMAND [ARGS]...
 | `tidmon refresh --check-videos --artist "Bad Bunny"` | Detecta álbumes + videos de un artista específico. |
 | `tidmon refresh --check-videos --video-since 2026-01-01` | Detecta álbumes + videos de artistas añadidos desde esa fecha. |
 | `tidmon refresh --check-videos --no-artists --no-playlists --video-since 2026-01-01` | Solo detecta videos de artistas añadidos desde esa fecha. |
+
+### Combinations — Reanudar y evitar bloqueos
+
+| Comando | Qué hace |
+|---|---|
+| `tidmon refresh --resume` | Reanuda un refresh interrumpido: salta los artistas revisados en las últimas 18h y sigue por los pendientes. |
+| `tidmon refresh --stale-hours 24` | Solo revisa artistas no revisados en 24h (o nunca). Para trocear o reanudar con precisión. |
+| `tidmon refresh --max-artists 5000` | Procesa máximo 5000 artistas este run. Combínalo con `--resume` para trocear una corrida grande en sesiones. |
+| `tidmon refresh --download --resume` | Reanuda y descarga lo nuevo de los artistas pendientes. |
+
+> El refresh ahora ordena por `last_checked` (los nunca-revisados primero), así que incluso un `tidmon refresh` normal interrumpido continúa por lo pendiente al relanzarlo. Si la API falla en 10 artistas seguidos (probable bloqueo bot/IP), el refresh **aborta solo** con un aviso para no reforzar el bloqueo.
 
 ### Combinations — Registrar en DB sin descargar
 

@@ -1,9 +1,10 @@
 import logging
+import random
 import smtplib
 import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 from tidmon.core.db import Database
 from tidmon.core.config import Config
 from tidmon.core.auth import get_session
@@ -59,6 +60,8 @@ class Refresh:
             video_since: str = None,
             video_until: str = None,
             artist_delay: float = 0.0,
+            stale_hours: float = None,
+            max_artists: int = None,
     ):
         """Refresh monitored content and detect new releases."""
         try:
@@ -71,7 +74,8 @@ class Refresh:
                 return
 
             if refresh_artists:
-                self._refresh_artists(artist_id, artist, since, until, album_since, album_until, artist_delay)
+                self._refresh_artists(artist_id, artist, since, until, album_since, album_until,
+                                      artist_delay, stale_hours, max_artists)
 
             if refresh_playlists:
                 self._refresh_all_playlists()
@@ -97,7 +101,8 @@ class Refresh:
             print(f"\n❌ Error: {e}")
             print("   Run 'tidmon auth' to log in.")
 
-    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until, artist_delay: float = 0.0):
+    def _refresh_artists(self, artist_id, artist, since, until, album_since, album_until,
+                         artist_delay: float = 0.0, stale_hours: float = None, max_artists: int = None):
         if artist_id:
             artists = [self.db.get_artist(artist_id)]
             if not artists[0]:
@@ -110,19 +115,48 @@ class Refresh:
                 return
             artists = [artist_obj]
         else:
-            artists = self.db.get_all_artists(since=since, until=until)
+            checked_before = None
+            if stale_hours is not None:
+                checked_before = (datetime.now() - timedelta(hours=stale_hours)).isoformat()
+            artists = self.db.get_all_artists(since=since, until=until, checked_before=checked_before)
 
         if not artists:
             logger.warning("No artists to refresh")
             return
 
+        if max_artists is not None and len(artists) > max_artists:
+            console.print(f"  [yellow]Tope de volumen:[/] procesando {max_artists} de {len(artists)} artistas este run.")
+            artists = artists[:max_artists]
+
         console.print(f"\n{'=' * 60}")
         console.print(f"  REFRESHING {len(artists)} ARTIST(S)")
         console.print(f"{'=' * 60}\n")
+
+        # Circuit-breaker: si muchos artistas seguidos fallan en la API, asumimos un
+        # bloqueo sistemico (DataDome/bot, cuenta o red) y paramos en vez de seguir
+        # martillando (lo que refuerza el bloqueo). El progreso ya quedo guardado en
+        # last_checked, asi que un re-run continua donde quedo.
+        consecutive_fail = 0
+        FAIL_ABORT = 10
+        PAUSE_EVERY = 250
         for i, artist_obj in enumerate(artists):
-            self._refresh_artist(artist_obj, album_since, album_until)
+            ok = self._refresh_artist(artist_obj, album_since, album_until)
+            if ok:
+                consecutive_fail = 0
+            else:
+                consecutive_fail += 1
+                if consecutive_fail >= FAIL_ABORT:
+                    console.print(f"\n  [red bold]ABORTANDO:[/] {consecutive_fail} artistas seguidos fallaron en la API.")
+                    console.print("  Probable bloqueo (DataDome/bot, cuenta o red). El progreso quedo guardado.")
+                    console.print("  Para y revisa antes de reintentar — insistir refuerza el bloqueo de IP.")
+                    logger.error(f"Refresh abortado tras {consecutive_fail} fallos de API seguidos (posible bloqueo bot/IP).")
+                    return
             if artist_delay > 0 and i < len(artists) - 1:
                 time.sleep(artist_delay)
+            elif PAUSE_EVERY and (i + 1) % PAUSE_EVERY == 0 and i < len(artists) - 1:
+                pause = random.uniform(20, 60)
+                logger.info(f"Pausa larga {pause:.0f}s tras {i + 1} artistas (ritmo anti-bot).")
+                time.sleep(pause)
 
     def _album_filters(self) -> list:
         """Map configured record_types → the TIDAL catalogue filters we must query.
@@ -160,7 +194,7 @@ class Refresh:
             except ValueError:
                 logger.error("Invalid --album-since date format. Use YYYY-MM-DD.")
                 print("  (invalid date format)")
-                return
+                return False
 
         api_albums = self.api.get_artist_albums(
             artist_id, filters=self._album_filters(), released_since=since_date
@@ -169,7 +203,7 @@ class Refresh:
         if api_albums is None:
             console.print(f"  [red]x[/] API error (skipped, will retry next refresh)")
             logger.warning(f"API returned no data for {artist_name} (ID: {artist_id}) — not updating check time")
-            return
+            return False
 
         # Date-filter the collected albums. This stays as the correctness
         # guarantee — the API early-termination is only an optimisation and may
@@ -184,7 +218,7 @@ class Refresh:
             except ValueError:
                 logger.error("Invalid --album-until date format. Use YYYY-MM-DD.")
                 print("  (invalid date format)")
-                return
+                return False
 
         db_albums = self.db.get_artist_albums(artist_id)
         db_album_ids = {album['album_id'] for album in db_albums}
@@ -215,6 +249,7 @@ class Refresh:
             console.print(f"  [dim]ok[/] up to date")
 
         self.db.update_artist_check_time(artist_id)
+        return True
 
     def _refresh_all_playlists(self):
         playlists = self.db.get_monitored_playlists()

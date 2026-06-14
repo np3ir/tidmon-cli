@@ -229,8 +229,17 @@ class Database:
             logger.error(f"Failed to get artist: {e}")
             return None
     
-    def get_all_artists(self, since: Optional[str] = None, until: Optional[str] = None) -> List[Dict]:
-        """Get all monitored artists, with optional date filters on when they were added."""
+    def get_all_artists(self, since: Optional[str] = None, until: Optional[str] = None,
+                        checked_before: Optional[str] = None) -> List[Dict]:
+        """Get all monitored artists.
+
+        since/until filter by when the artist was ADDED (added_date). checked_before
+        (ISO timestamp) returns only artists whose last_checked is older than it, or
+        never checked — used to resume/chunk a refresh without redoing recent ones.
+
+        Ordered by last_checked ASC (never-checked NULLs first), so a plain re-run of
+        an interrupted refresh naturally continues with the artists still pending.
+        """
         try:
             cursor = self.connection.cursor()
             query = "SELECT * FROM artists WHERE active = 1"
@@ -244,7 +253,11 @@ class Database:
                 query += " AND date(added_date) <= ?"
                 params.append(until)
 
-            query += " ORDER BY artist_name"
+            if checked_before:
+                query += " AND (last_checked IS NULL OR last_checked < ?)"
+                params.append(checked_before)
+
+            query += " ORDER BY last_checked ASC, artist_name"
 
             cursor.execute(query, params)
             rows = cursor.fetchall()

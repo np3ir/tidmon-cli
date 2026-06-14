@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-06-14
+
+### Added
+
+- **Resumable refresh** (`core/db.py`, `cmd/refresh.py`, `cli.py`)
+  — `get_all_artists` now orders by `last_checked ASC` (never-checked first), so an
+  interrupted `tidmon refresh` continues with the still-pending artists on the next
+  run instead of restarting from the top. New `--resume` (skip artists checked in the
+  last 18h) and `--stale-hours N` (only artists not checked in the last N hours, or
+  never) flags let you resume or chunk a large refresh precisely.
+- **Volume cap and pacing** (`cmd/refresh.py`, `cli.py`)
+  — `--max-artists N` processes at most N artists per run, plus a random 20–60s pause
+  every 250 artists, to break the constant-rate pattern that can trigger bot detection.
+
+### Changed
+
+- **Anti-bot circuit breaker** (`cmd/refresh.py`, `core/api.py`)
+  — `refresh` now aborts after 10 consecutive per-artist API failures (likely a
+  systemic block — DataDome/bot protection, suspended account or network) instead of
+  hammering every remaining artist, which only reinforces an IP block. The API client
+  also detects the DataDome signature (`datadome` / `bot_protection` /
+  `you have been blocked` / `abuse`) in `403` responses and logs it as an error.
+  `_refresh_artist` now returns a success boolean to drive the breaker.
+
+---
+
 ## [Unreleased] — 2026-05-16
 
 ### Fixed

@@ -82,6 +82,15 @@ class TidalAPI:
                         # Persistent 401 after a successful refresh = content
                         # restriction (geo-block, subscription tier), not a token
                         # issue — get_track_stream will return None gracefully.
+                        if status == 403:
+                            body = ""
+                            try:
+                                body = (e.response.text or "")[:400].lower()
+                            except Exception:
+                                body = ""
+                            if any(k in body for k in ("datadome", "bot_protection", "captcha", "you have been blocked", "abuse")):
+                                log.error("Possible anti-bot block (DataDome) on 403 — the IP may be flagged. "
+                                          "Stop and let the IP cool down; retrying in a loop makes it worse.")
                         log.debug(f"Received {status} — content not available or token issue already handled by client.")
                         raise e
 

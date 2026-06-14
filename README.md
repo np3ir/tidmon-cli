@@ -12,12 +12,13 @@ A powerful command-line tool for monitoring TIDAL artists, tracking new releases
 
 - **Artist & Playlist Monitoring**: Keep a list of your favorite artists and playlists to track for new releases.
 - **Automatic Refresh**: Check for new albums and videos with a single command. Newly detected content is shown in a summary and downloaded automatically with `--download`.
+- **Resumable Refresh**: Artists are processed least-recently-checked first, so an interrupted refresh continues with the still-pending artists on the next run. Use `--resume`/`--stale-hours N` to skip recently-checked artists and `--max-artists N` to chunk a large run.
 - **Video Support**: Download music videos alongside audio. Videos are tracked in the local database — already-downloaded videos are skipped automatically on future runs.
 - **High-Quality Downloads**: Download music in the highest quality available, including Hi-Res FLAC (MAX), with automatic fallback to lower qualities.
 - **Sequential Downloader**: Each track is fully completed (audio → lyrics → metadata → cover) before moving to the next.
 - **Flexible Downloads**: Download by artist, album, track, video, or URL. Supports resuming interrupted downloads and forcing re-downloads.
 - **Customizable File Organization**: Use powerful and flexible templates to define your folder structure and file naming conventions for both audio and video.
-- **Robust and Resilient**: Handles token expiration automatically for long-running sessions and includes rate-limiting to respect the TIDAL API.
+- **Robust and Resilient**: Handles token expiration automatically for long-running sessions and includes rate-limiting to respect the TIDAL API. If many consecutive API calls fail (e.g. an IP-level bot block), the refresh stops itself instead of hammering a blocked endpoint.
 - **Local Database**: All monitored items, release history, and downloaded videos are stored locally, giving you full control over your data.
 - **Backup & Restore**: Create and restore backups of your database and configuration at any time.
 
