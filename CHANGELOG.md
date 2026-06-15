@@ -29,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   also detects the DataDome signature (`datadome` / `bot_protection` /
   `you have been blocked` / `abuse`) in `403` responses and logs it as an error.
   `_refresh_artist` now returns a success boolean to drive the breaker.
+- **Randomized request pacing** (`core/client.py`)
+  — Each request now waits a randomized interval (mean ~1.25x the configured
+  `requests_per_minute`, with an occasional longer "human" pause) instead of a
+  near-constant cadence, so the traffic pattern is far less recognizable as a bot.
 
 ---
 
