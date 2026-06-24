@@ -49,8 +49,14 @@ class TidalClientImproved:
         token: str,
         on_token_expiry: Optional[Callable[..., Optional[str]]] = None,
         requests_per_minute: int = 50,
+        anonymous: bool = False,
     ):
         self.on_token_expiry = on_token_expiry
+        # Anonymous mode: catalogue reads go out strictly via x-tidal-token; the
+        # user's Bearer token is NEVER attached and never refreshed. Used by the
+        # detection path (refresh/monitor) so polling can't disturb or flag the
+        # personal account. Downloads still need a real (non-anonymous) client.
+        self.anonymous = anonymous
 
         # Store client_id for x-tidal-token fallback on public endpoints
         from tidmon.core.auth_client import get_default_client_id
@@ -116,6 +122,15 @@ class TidalClientImproved:
         base_url = API_V1_URL if api_version == "v1" else API_V2_URL
         url = f"{base_url}/{endpoint}"
 
+        # Anonymous client: refuse endpoints that require a user Bearer token
+        # (playback, logout, token, events). Detection/catalogue reads never hit
+        # these, so this only guards against accidental account use.
+        if self.anonymous and self._needs_auth(endpoint):
+            raise ApiError(
+                userMessage=f"Endpoint '{endpoint}' requires login; client is anonymous.",
+                status=401,
+            )
+
         try:
             _no_cache = any(p in url for p in _NO_CACHE_PATTERNS)
 
@@ -146,6 +161,17 @@ class TidalClientImproved:
                 if response.status_code == 200:
                     self._rate_limit_delay = max(0.0, self._rate_limit_delay - 0.1)
                     return model(**response.json())
+                # Adaptive backoff on rate-limit even for the public path
+                if response.status_code == 429:
+                    self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
+                # Anonymous mode: never fall back to the user's Bearer token. Surface
+                # the public-endpoint status so the caller's retry/skip logic handles
+                # it (429 → backoff+retry, 4xx → skip) without ever touching the account.
+                if self.anonymous:
+                    raise ApiError(
+                        userMessage=f"HTTP {response.status_code} for {url} (anonymous public call)",
+                        status=response.status_code,
+                    )
                 # If public call fails, fall through to Bearer attempt below
                 log.debug(f"x-tidal-token failed ({response.status_code}) for {endpoint} — trying Bearer")
 

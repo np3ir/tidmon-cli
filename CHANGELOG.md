@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-06-23
+
+### Added
+
+- **Login-free detection (anonymous refresh)** (`core/client.py`, `core/auth.py`,
+  `cmd/refresh.py`, `cmd/monitor.py`, `cli.py`)
+  — `refresh` and `monitor` now feed the database **without using your account**.
+  Catalogue reads (artists, albums, videos, search) go out strictly via the public
+  `x-tidal-token` path, so polling never attaches, refreshes, or rotates your personal
+  OAuth token — eliminating the risk of getting the account flagged or soft-blocked
+  during large runs. `TidalClientImproved(anonymous=True)` drops the Bearer fallback
+  (a failed public call raises instead of retrying with the account token) and refuses
+  auth-only endpoints (`playbackinfo`/`playback`/`logout`/`token`/`events`). Login is
+  now optional and only required for **downloading** (streams need a subscriber session).
+
+### Changed
+
+- **`refresh` and `monitor` default to anonymous** — pass `--use-account` to `tidmon
+  refresh` to restore the previous behaviour (account Bearer + token-expiry fallback),
+  e.g. if anonymous public access is ever blocked. `--download` is unaffected: the
+  downloader still uses your logged-in account.
+
+---
+
 ## [Unreleased] — 2026-06-14
 
 ### Added

@@ -18,10 +18,14 @@ console = Console()
 class Refresh:
     """Check monitored artists and playlists for new releases."""
 
-    def __init__(self, config: Config = None, session: TidalSession = None):
+    def __init__(self, config: Config = None, session: TidalSession = None, anonymous: bool = True):
         self.config = config or Config()
         self.db = Database()
         self.session = session or get_session()
+        # Detection runs anonymously by default (x-tidal-token only) so feeding the
+        # DB never touches/rotates the personal account. Downloads, which create
+        # their own Download() session, still use the logged-in account.
+        self.anonymous = anonymous
         self._api = None
         self.new_releases = []
         self.new_playlist_tracks = []
@@ -30,7 +34,8 @@ class Refresh:
     @property
     def api(self):
         if self._api is None:
-            self._api = self.session.get_api()
+            self._api = (self.session.get_anonymous_api()
+                         if self.anonymous else self.session.get_api())
         return self._api
 
     def close(self) -> None:

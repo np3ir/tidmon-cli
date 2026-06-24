@@ -14,17 +14,21 @@ logger = logging.getLogger(__name__)
 class Monitor:
     """Handle artist monitoring operations"""
     
-    def __init__(self, config: Config = None, session: TidalSession = None):
+    def __init__(self, config: Config = None, session: TidalSession = None, anonymous: bool = True):
         self.config = config or Config()
         self.db = Database()
         self.session = session or get_session()
+        # Anonymous by default: searching/adding artists is a catalogue read and
+        # must not touch or rotate the personal account token.
+        self.anonymous = anonymous
         self._api = None
 
     @property
     def api(self):
         """Lazy-loads the API client upon first access."""
         if self._api is None:
-            self._api = self.session.get_api()
+            self._api = (self.session.get_anonymous_api()
+                         if self.anonymous else self.session.get_api())
         return self._api
     
     def close(self) -> None:

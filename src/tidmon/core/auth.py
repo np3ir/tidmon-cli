@@ -80,6 +80,42 @@ class TidalSession:
         )
         return self.api
 
+    def get_anonymous_api(self) -> TidalAPI:
+        """
+        Returns a TidalAPI that NEVER uses the user's account token.
+
+        Catalogue reads go out via the public x-tidal-token path; there is no
+        Bearer fallback and no token refresh, so running refresh/monitor in this
+        mode cannot disturb, rotate, or get the personal account flagged. It also
+        works with no login at all. Downloads still require get_api() (a
+        logged-in subscriber session).
+        """
+        if self.api is not None:
+            return self.api
+
+        # country_code is needed for catalogue params. Reading the stored value is
+        # harmless (no network, no token use); fall back to config, then "US".
+        country_code = "US"
+        try:
+            stored = load_auth_data()
+            country_code = stored.country_code or Config().get("country_code", "US") or "US"
+        except Exception:
+            country_code = Config().get("country_code", "US") or "US"
+
+        logger.debug("Creating anonymous TidalAPI instance (no account token).")
+        client = TidalClientImproved(
+            token="",
+            on_token_expiry=None,
+            requests_per_minute=Config().get("requests_per_minute", 20),
+            anonymous=True,
+        )
+        self.api = TidalAPI(
+            client=client,
+            user_id="",
+            country_code=country_code,
+        )
+        return self.api
+
 
 def get_session() -> TidalSession:
     """Global factory to get the TidalSession."""

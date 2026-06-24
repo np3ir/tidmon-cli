@@ -306,12 +306,15 @@ def monitor_export(ctx, output):
                    'Resume/chunk a big refresh without redoing recent ones.')
 @click.option('--max-artists', default=None, type=int,
               help='Process at most N artists this run (volume cap to avoid bot-detection on huge runs).')
+@click.option('--use-account', is_flag=True,
+              help='Use your logged-in account for detection (enables Bearer fallback). '
+                   'Default: anonymous (x-tidal-token only) — never touches or rotates your account.')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay, resume, stale_hours, max_artists):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay, resume, stale_hours, max_artists, use_account):
     """Check monitored artists for new releases."""
     if resume and stale_hours is None:
         stale_hours = 18.0
-    with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session')) as r:
+    with Refresh(config=ctx.obj.get('config'), session=ctx.obj.get('session'), anonymous=not use_account) as r:
         r.refresh(
             artist=artist,
             artist_id=artist_id,
