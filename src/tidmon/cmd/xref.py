@@ -110,9 +110,19 @@ def _mb_url_relations(mbid: str) -> dict:
         url = rel.get("url", {}).get("resource", "")
         for domain, key in _MB_PLATFORM_MAP.items():
             if domain in url:
-                # Extract ID from the URL path
                 parts = [p for p in url.rstrip("/").split("/") if p]
-                pid = parts[-1] if parts else None
+                if key in ("apple_music", "deezer"):
+                    # IDs are always numeric; URLs may contain country codes or slugs
+                    # e.g. https://music.apple.com/us/artist/name/123456789
+                    # e.g. https://www.deezer.com/artist/123456
+                    numeric_parts = [p for p in parts if p.isdigit()]
+                    pid = numeric_parts[-1] if numeric_parts else None
+                elif key == "qobuz":
+                    # https://www.qobuz.com/us-en/interpreter/name/123456
+                    numeric_parts = [p for p in parts if p.isdigit()]
+                    pid = numeric_parts[-1] if numeric_parts else (parts[-1] if parts else None)
+                else:
+                    pid = parts[-1] if parts else None
                 if pid:
                     result[key] = pid
                 break
