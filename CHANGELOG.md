@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-06-25
+
+### Added
+
+- **`refresh --restart`** (`cli.py`, `cmd/refresh.py`, `core/db.py`)
+  — start a refresh from the beginning instead of resuming. Clears every artist's
+  `last_checked` (`db.reset_all_check_times()`) so all monitored artists are re-checked
+  from the top in `artist_name` order. Non-destructive: it only resets the progress
+  timestamps and does **not** delete artists or albums (unlike `tidmon reset`).
+
+### Changed
+
+- **Faster refresh pacing, same anti-bot safety** (`core/client.py`)
+  — the per-request interval jitter was recentred from `uniform(0.6, 1.9)` (mean 1.25×
+  the configured interval) to `uniform(0.5, 1.5)` (mean 1.0×). The irregular cadence
+  that defeats bot-detection comes from the variance, not from an inflated mean, so this
+  restores the configured `requests_per_minute` (~20% faster) while keeping the request
+  pattern just as non-bot-like. The occasional longer "human" pause is unchanged.
+
+### Fixed
+
+- **Doubled rate-limit backoff after 429s** (`core/api.py`, `core/client.py`)
+  — `_fetch_with_retry` kept its own adaptive `_rate_limit_delay` that stacked on top of
+  the identical one in `TidalClientImproved.fetch()`, so each request after a 429 could
+  sleep up to ~10s extra instead of ~5s. The client is now the single rate-limit
+  authority; `api.py` retains only the retry/exponential-backoff loop.
+
+---
+
 ## [Unreleased] — 2026-06-23
 
 ### Added

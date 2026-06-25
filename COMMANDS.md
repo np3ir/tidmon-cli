@@ -83,6 +83,7 @@ tidmon [OPTIONS] COMMAND [ARGS]...
 | `--resume` | Resume an interrupted refresh: skip artists checked in the last 18h. |
 | `--stale-hours N` | Only refresh artists not checked in the last N hours (or never). Resume/chunk precisely. |
 | `--max-artists N` | Process at most N artists this run (volume cap to avoid bot-detection on huge runs). |
+| `--restart` | Start from the beginning: clear every artist's `last_checked` so all are re-checked from the top instead of resuming. Non-destructive (keeps artists/albums). |
 
 ### Combinations — Ver sin descargar
 
@@ -103,8 +104,9 @@ tidmon [OPTIONS] COMMAND [ARGS]...
 | `tidmon refresh --stale-hours 24` | Solo revisa artistas no revisados en 24h (o nunca). Para trocear o reanudar con precisión. |
 | `tidmon refresh --max-artists 5000` | Procesa máximo 5000 artistas este run. Combínalo con `--resume` para trocear una corrida grande en sesiones. |
 | `tidmon refresh --download --resume` | Reanuda y descarga lo nuevo de los artistas pendientes. |
+| `tidmon refresh --restart` | Empieza desde 0: resetea el progreso (`last_checked`) y revisa a todos desde la A. **No** borra artistas ni álbumes (a diferencia de `tidmon reset`). |
 
-> El refresh ahora ordena por `last_checked` (los nunca-revisados primero), así que incluso un `tidmon refresh` normal interrumpido continúa por lo pendiente al relanzarlo. Si la API falla en 10 artistas seguidos (probable bloqueo bot/IP), el refresh **aborta solo** con un aviso para no reforzar el bloqueo.
+> El refresh ahora ordena por `last_checked` (los nunca-revisados primero), así que incluso un `tidmon refresh` normal interrumpido continúa por lo pendiente al relanzarlo. Para forzar que empiece desde 0 en vez de continuar, usa `--restart`. Si la API falla en 10 artistas seguidos (probable bloqueo bot/IP), el refresh **aborta solo** con un aviso para no reforzar el bloqueo.
 
 ### Combinations — Registrar en DB sin descargar
 

@@ -67,10 +67,16 @@ class Refresh:
             artist_delay: float = 0.0,
             stale_hours: float = None,
             max_artists: int = None,
+            restart: bool = False,
     ):
         """Refresh monitored content and detect new releases."""
         try:
             logger.info("Starting refresh...")
+
+            if restart:
+                n = self.db.reset_all_check_times()
+                logger.info(f"--restart: cleared progress for {n} artist(s).")
+                console.print(f"  [yellow]↺ Restart:[/] progreso reseteado ({n:,} artistas) — empezando desde el principio.")
 
             # Check if there's anything to do if no specific artist is given
             if not artist_id and not artist and not self.db.get_all_artists() and not self.db.get_monitored_playlists():

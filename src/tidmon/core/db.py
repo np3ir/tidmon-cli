@@ -363,7 +363,22 @@ class Database:
             self.connection.commit()
         except sqlite3.Error as e:
             logger.error(f"Failed to update check time: {e}")
-    
+
+    def reset_all_check_times(self) -> int:
+        """Clear last_checked for ALL artists so the next refresh starts from the
+        beginning (re-checks everyone in artist_name order) instead of resuming.
+        Non-destructive: only resets timestamps, does NOT delete artists/albums."""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute('UPDATE artists SET last_checked = NULL')
+            self.connection.commit()
+            n = cursor.rowcount
+            logger.info(f"Reset last_checked for {n} artist(s).")
+            return n
+        except sqlite3.Error as e:
+            logger.error(f"Failed to reset check times: {e}")
+            return 0
+
     def add_album(self, album: Album, artist_id: int) -> bool:
         """Add an album to the database.
 

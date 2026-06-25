@@ -306,11 +306,15 @@ def monitor_export(ctx, output):
                    'Resume/chunk a big refresh without redoing recent ones.')
 @click.option('--max-artists', default=None, type=int,
               help='Process at most N artists this run (volume cap to avoid bot-detection on huge runs).')
+@click.option('--restart', is_flag=True,
+              help='Start from the beginning: clears every artist\'s last_checked so the refresh '
+                   're-checks everyone from the top (artist_name order) instead of resuming. '
+                   'Non-destructive (only resets progress timestamps, keeps artists/albums).')
 @click.option('--use-account', is_flag=True,
               help='Use your logged-in account for detection (enables Bearer fallback). '
                    'Default: anonymous (x-tidal-token only) — never touches or rotates your account.')
 @click.pass_context
-def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay, resume, stale_hours, max_artists, use_account):
+def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, videos_only, check_videos, register_videos, video_since, video_until, since, until, album_since, album_until, artist_delay, resume, stale_hours, max_artists, restart, use_account):
     """Check monitored artists for new releases."""
     if resume and stale_hours is None:
         stale_hours = 18.0
@@ -333,6 +337,7 @@ def refresh(ctx, artist, artist_id, skip_artists, skip_playlists, download, vide
             artist_delay=artist_delay,
             stale_hours=stale_hours,
             max_artists=max_artists,
+            restart=restart,
         )
 
 

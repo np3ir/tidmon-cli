@@ -13,7 +13,7 @@ A powerful command-line tool for monitoring TIDAL artists, tracking new releases
 - **Artist & Playlist Monitoring**: Keep a list of your favorite artists and playlists to track for new releases.
 - **Login-Free Monitoring**: `monitor` and `refresh` read the TIDAL catalogue anonymously (via `x-tidal-token`), so feeding your database never touches, refreshes, or risks your personal account. Logging in is only needed for **downloading**. Use `tidmon refresh --use-account` to force the account path if anonymous access is ever blocked.
 - **Automatic Refresh**: Check for new albums and videos with a single command. Newly detected content is shown in a summary and downloaded automatically with `--download`.
-- **Resumable Refresh**: Artists are processed least-recently-checked first, so an interrupted refresh continues with the still-pending artists on the next run. Use `--resume`/`--stale-hours N` to skip recently-checked artists and `--max-artists N` to chunk a large run.
+- **Resumable Refresh**: Artists are processed least-recently-checked first, so an interrupted refresh continues with the still-pending artists on the next run. Use `--resume`/`--stale-hours N` to skip recently-checked artists, `--max-artists N` to chunk a large run, and `--restart` to clear all progress and re-check everyone from the top.
 - **Video Support**: Download music videos alongside audio. Videos are tracked in the local database — already-downloaded videos are skipped automatically on future runs.
 - **High-Quality Downloads**: Download music in the highest quality available, including Hi-Res FLAC (MAX), with automatic fallback to lower qualities.
 - **Sequential Downloader**: Each track is fully completed (audio → lyrics → metadata → cover) before moving to the next.

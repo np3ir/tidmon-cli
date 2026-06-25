@@ -43,12 +43,12 @@ class TidalAPI:
         self.client = client
         self.user_id = user_id
         self.country_code = country_code
-        self._rate_limit_delay = 0.0
 
     def _fetch_with_retry(self, *args: Any, max_retries: int = 10, **kwargs: Any):
-        if self._rate_limit_delay > 0:
-            time.sleep(self._rate_limit_delay)
-
+        # Rate-limiting (per-request pacing + adaptive backoff on 429) lives entirely
+        # in TidalClientImproved.fetch(), the single global authority. We do NOT keep a
+        # second adaptive delay here — stacking the two doubled the wait after every 429.
+        # This loop only handles retries (exponential backoff below).
         attempt = 0
         base_backoff = 5
         max_backoff = 60
@@ -56,8 +56,6 @@ class TidalAPI:
         while True:
             try:
                 res = self.client.fetch(*args, **kwargs)
-                if self._rate_limit_delay > 0:
-                    self._rate_limit_delay = max(0.0, self._rate_limit_delay - 0.1)
                 return res
 
             except Exception as e:
@@ -103,11 +101,8 @@ class TidalAPI:
 
                     if status in [429, 500, 502, 503, 504]:
                         is_http = True
-                        if status == 429:
-                            self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
                 elif "429" in str(e):
                     is_http = True
-                    self._rate_limit_delay = min(5.0, self._rate_limit_delay + 1.0)
 
                 if not is_net and not is_http:
                     raise e

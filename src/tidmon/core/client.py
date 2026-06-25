@@ -143,9 +143,10 @@ class TidalClientImproved:
                 elapsed = time.monotonic() - self._last_request_time
                 # Randomize the target interval every request so the cadence is NOT a
                 # constant metronome — a steady fixed rate is one of the clearest bot
-                # signals for anti-bot systems (DataDome). Mean is ~1.25x the configured
-                # interval, with an occasional longer "human" pause.
-                target = self._request_interval * random.uniform(0.6, 1.9)
+                # signals for anti-bot systems (DataDome). Mean is ~1.0x the configured
+                # interval (the irregularity, not an inflated mean, is what defeats
+                # bot-detection), with an occasional longer "human" pause.
+                target = self._request_interval * random.uniform(0.5, 1.5)
                 if random.random() < 0.07:
                     target += random.uniform(4.0, 10.0)
                 wait = target - elapsed
