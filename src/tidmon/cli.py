@@ -17,6 +17,7 @@ from tidmon.cmd.show import Show
 from tidmon.cmd.config import ConfigCommand
 from tidmon.cmd.backup import Backup
 from tidmon.cmd.xref import Xref
+from tidmon.cmd.playlist import Playlist
 from tidmon.core.utils.url import parse_url, TidalType
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -514,6 +515,24 @@ def show_report(export):
     """Show per-artist count of albums and songs."""
     with Show() as s:
         s.show_report(export=export)
+
+
+@cli.group()
+def playlist():
+    """Inspect Tidal playlists (read-only, doesn't add them to monitoring)."""
+    pass
+
+
+@playlist.command('albums')
+@click.argument('url')
+@click.option('--export', default=None, metavar='FILE',
+              help="Write one 'tiddl download url' command per unique album to FILE.")
+def playlist_albums(url, export):
+    """Show every album that makes up a playlist's current tracks.
+
+    URL can be a full Tidal playlist link or a bare UUID.
+    """
+    Playlist().albums(url_or_uuid=url, export=export)
 
 
 @show.command('discography')
