@@ -48,6 +48,19 @@ def _export_tiddl(albums: list, path: Path) -> None:
     _print_safe(f"[green]Exported {len(lines)} album(s) to[/] {path}")
 
 
+def _export_artists_csv(artists: list, path: Path) -> None:
+    """Write a CSV with one row per unique artist (ID, name, TIDAL link)."""
+    import csv
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["Artist ID", "Artist Name", "TIDDL"])
+        for a in artists:
+            w.writerow([a["artist_id"], a["name"], f"https://tidal.com/artist/{a['artist_id']}"])
+    _print_safe(f"[green]Exported {len(artists)} artist(s) to[/] {path}")
+
+
 class Playlist:
     """Inspect a Tidal playlist's albums without adding it to monitoring."""
 
@@ -113,3 +126,49 @@ class Playlist:
 
         if export:
             _export_tiddl(albums, Path(export))
+
+    def artists(self, url_or_uuid: str, export: Optional[str] = None) -> None:
+        parsed = parse_url(url_or_uuid)
+        if parsed and parsed.tidal_type == TidalType.PLAYLIST:
+            playlist_uuid = parsed.tidal_id
+        else:
+            playlist_uuid = url_or_uuid.strip()
+
+        playlist = self.api.get_playlist(playlist_uuid)
+        playlist_title = _nfc(playlist.title) if playlist else playlist_uuid
+
+        _print_safe(f"[cyan]Fetching tracks for playlist:[/] {playlist_title}")
+        tracks = self.api.get_playlist_items(playlist_uuid)
+
+        seen_ids = set()
+        artists = []
+        video_count = 0
+        for t in tracks:
+            if not isinstance(t, Track):
+                video_count += 1
+                continue
+            track_artists = t.artists if getattr(t, "artists", None) else (
+                [t.artist] if t.artist is not None else []
+            )
+            for artist in track_artists:
+                if artist is None or artist.id in seen_ids:
+                    continue
+                seen_ids.add(artist.id)
+                artists.append({"artist_id": artist.id, "name": _nfc(artist.name)})
+
+        artists.sort(key=lambda a: a["name"].lower())
+
+        table = Table(title=f"Artists in playlist: {playlist_title}", show_lines=False)
+        table.add_column("Artist", style="cyan")
+        table.add_column("ID", style="dim")
+        for a in artists:
+            table.add_row(a["name"], str(a["artist_id"]))
+        _print_safe(table)
+
+        summary = f"\n[bold]Tracks:[/] {len(tracks)}   [bold]Unique artists:[/] {len(artists)}"
+        if video_count:
+            summary += f"   [dim]({video_count} video item(s) skipped)[/]"
+        _print_safe(summary)
+
+        if export:
+            _export_artists_csv(artists, Path(export))

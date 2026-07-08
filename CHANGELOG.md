@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-07-07
+
+### Added
+
+- **`tidmon playlist artists <URL>`** (`cmd/playlist.py`, `cli.py`)
+  — read-only lookup that lists every unique artist appearing in a playlist's current
+  tracks, mirroring `tidmon playlist albums`. Supports `--export FILE` to write a CSV
+  (Artist ID, Artist Name, TIDAL link) of the unique artists.
+
+### Removed
+
+- **`tidmon monitor playlist export`** — moved to `tidmon playlist artists --export`,
+  which lives alongside the other read-only playlist inspection commands instead of
+  under `monitor playlist`. Same CSV output format.
+
 ## [Unreleased] — 2026-06-25
 
 ### Added
