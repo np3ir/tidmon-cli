@@ -69,7 +69,7 @@ Read-only lookups against a TIDAL playlist's current tracks. Does **not** add th
 | `tidmon playlist albums <URL>` | Show every unique album that makes up the playlist's current tracks. |
 | `tidmon playlist albums <URL> --export albums.txt` | Also write one `tiddl download url` command per unique album to a file. |
 | `tidmon playlist artists <URL>` | Show every unique artist that appears in the playlist's current tracks. |
-| `tidmon playlist artists <URL> --export artists.csv` | Also export unique artists (ID, name, TIDAL link) to a CSV file. |
+| `tidmon playlist artists <URL> --export artists.txt` | Also write one `tiddl download url` command per unique artist to a file. |
 
 `URL` accepts a full TIDAL playlist link or a bare UUID.
 

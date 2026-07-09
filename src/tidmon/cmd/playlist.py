@@ -48,17 +48,16 @@ def _export_tiddl(albums: list, path: Path) -> None:
     _print_safe(f"[green]Exported {len(lines)} album(s) to[/] {path}")
 
 
-def _export_artists_csv(artists: list, path: Path) -> None:
-    """Write a CSV with one row per unique artist (ID, name, TIDAL link)."""
-    import csv
+def _export_tiddl_artists(artists: list, path: Path) -> None:
+    """Write a .txt file with one 'tiddl download url' command per unique artist.
 
+    One command per line, nothing else — LAUNCHER.BAT-style runners read every
+    line as a command with no comment/blank-line filtering.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
-        w.writerow(["Artist ID", "Artist Name", "TIDDL"])
-        for a in artists:
-            w.writerow([a["artist_id"], a["name"], f"https://tidal.com/artist/{a['artist_id']}"])
-    _print_safe(f"[green]Exported {len(artists)} artist(s) to[/] {path}")
+    lines = [f"tiddl download url https://tidal.com/artist/{a['artist_id']}" for a in artists]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    _print_safe(f"[green]Exported {len(lines)} artist(s) to[/] {path}")
 
 
 class Playlist:
@@ -171,4 +170,4 @@ class Playlist:
         _print_safe(summary)
 
         if export:
-            _export_artists_csv(artists, Path(export))
+            _export_tiddl_artists(artists, Path(export))

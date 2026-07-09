@@ -488,7 +488,7 @@ def playlist_albums(url, export):
 @playlist.command('artists')
 @click.argument('url')
 @click.option('--export', default=None, metavar='FILE',
-              help='Export unique artists (ID, name, TIDAL link) to a CSV FILE.')
+              help="Write one 'tiddl download url' command per unique artist to FILE.")
 def playlist_artists(url, export):
     """Show every artist that appears in a playlist's current tracks.
 

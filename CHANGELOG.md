@@ -12,8 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`tidmon playlist artists <URL>`** (`cmd/playlist.py`, `cli.py`)
   — read-only lookup that lists every unique artist appearing in a playlist's current
-  tracks, mirroring `tidmon playlist albums`. Supports `--export FILE` to write a CSV
-  (Artist ID, Artist Name, TIDAL link) of the unique artists.
+  tracks, mirroring `tidmon playlist albums`. Supports `--export FILE` to write one
+  `tiddl download url https://tidal.com/artist/<id>` command per unique artist,
+  same convention as `playlist albums --export` (`tiddl download url` accepts artist
+  resource URLs and pulls their full discography).
 
 ### Removed
 
