@@ -100,6 +100,37 @@ def favorite(artists, playlists, chunk_size, pause):
     Favorite().run(artists=artists, playlists=playlists, chunk_size=chunk_size, pause=pause)
 
 
+@cli.command()
+@click.argument('artists', nargs=-1)
+@click.option('--file', '-f', type=click.Path(exists=True, dir_okay=False),
+              help='Archivo con un artista por línea (ID o nombre; # = comentario).')
+@click.option('--chunk-size', default=100, metavar='N', help='IDs por llamada (default: 100).')
+@click.option('--pause', default=0.5, metavar='SECONDS', help='Pausa entre lotes (default: 0.5s).')
+def follow(artists, file, chunk_size, pause):
+    """Sigue artistas específicos en TIDAL (por ID o nombre de la DB).
+
+    Ej: tidmon follow "Bad Bunny" 17364 --file mis_artistas.txt
+    Ojo: TIDAL topa en 10,000 favoritos; si no cabe, avisa.
+    """
+    Favorite().follow(tokens=list(artists), file=file, chunk_size=chunk_size, pause=pause)
+
+
+@cli.command()
+@click.argument('artists', nargs=-1)
+@click.option('--file', '-f', type=click.Path(exists=True, dir_okay=False),
+              help='Archivo con un artista por línea (ID o nombre; # = comentario).')
+@click.option('--all', 'unfollow_all', is_flag=True, help='Des-seguir TODOS los artistas (deja la cuenta en 0).')
+@click.option('--pause', default=0.3, metavar='SECONDS', help='Pausa entre borrados (default: 0.3s).')
+@click.confirmation_option(prompt='¿Seguro que quieres des-seguir? (los follows se pierden)')
+def unfollow(artists, file, unfollow_all, pause):
+    """Deja de seguir artistas en TIDAL (por ID, nombre, --file, o --all).
+
+    Ej: tidmon unfollow "Bonnie Tyler"   ·   tidmon unfollow --all
+    Útil para liberar slots del tope de 10,000 y seguir otros.
+    """
+    Favorite().unfollow(tokens=list(artists), file=file, pause=pause, unfollow_all=unfollow_all)
+
+
 @cli.command('auth-refresh')
 @click.option('--force', '-f', is_flag=True, help='Refresh even if token is still valid.')
 @click.option('--early-expire', '-e', default=0, metavar='seconds',

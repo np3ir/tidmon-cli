@@ -149,6 +149,98 @@ class Favorite:
                 f"No caben más {label}; el resto quedó sin añadir."
             )
 
+    # ── resolución de artistas (id | nombre | archivo) ───────────────────────
+    def _resolve_artists(self, tokens: list) -> tuple:
+        """Convierte una lista de tokens (IDs numéricos o nombres) en IDs de TIDAL.
+        Los nombres se resuelven contra la DB de tidmon (get_artist_by_name).
+        Devuelve (ids_resueltos, no_encontrados)."""
+        ids, missing = [], []
+        for tok in tokens:
+            tok = str(tok).strip()
+            if not tok:
+                continue
+            if tok.isdigit():
+                ids.append(int(tok))
+                continue
+            row = self.db.get_artist_by_name(tok)
+            if row and row.get("artist_id") is not None:
+                ids.append(row["artist_id"])
+            else:
+                missing.append(tok)
+        # dedup preservando orden
+        seen, out = set(), []
+        for i in ids:
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out, missing
+
+    @staticmethod
+    def _read_file_tokens(path: str) -> list:
+        """Lee un archivo con un artista por línea (ID o nombre). Ignora vacías y #."""
+        with open(path, encoding="utf-8") as f:
+            return [ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+
+    # ── follow / unfollow granular ───────────────────────────────────────────
+    def follow(self, tokens: list, file: Optional[str], chunk_size: int, pause: float) -> None:
+        toks = list(tokens)
+        if file:
+            toks += self._read_file_tokens(file)
+        if not toks:
+            console.print("[yellow]Nada que seguir. Pasa IDs/nombres o --file.[/]")
+            return
+        ids, missing = self._resolve_artists(toks)
+        if missing:
+            console.print(f"[yellow]No encontrados en la DB (se ignoran):[/] {', '.join(missing)}")
+        if not ids:
+            console.print("[red]Ningún artista resuelto.[/]")
+            return
+        self._sync("artistas", "artists", "artistIds", "id", ids, chunk_size, pause)
+
+    def unfollow(self, tokens: list, file: Optional[str], pause: float, unfollow_all: bool) -> None:
+        if unfollow_all:
+            ids = sorted(int(i) for i in self._get_existing("artists", "id"))
+            console.print(f"[bold red]Vas a des-seguir TODOS ({len(ids)}) los artistas.[/]")
+        else:
+            toks = list(tokens)
+            if file:
+                toks += self._read_file_tokens(file)
+            if not toks:
+                console.print("[yellow]Nada que des-seguir. Pasa IDs/nombres, --file, o --all.[/]")
+                return
+            ids, missing = self._resolve_artists(toks)
+            if missing:
+                console.print(f"[yellow]No encontrados en la DB (se ignoran):[/] {', '.join(missing)}")
+        if not ids:
+            console.print("[red]Ningún artista para des-seguir.[/]")
+            return
+
+        removed, failed = 0, 0
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                      BarColumn(), TextColumn("{task.completed}/{task.total}"),
+                      TimeElapsedColumn(), console=console) as prog:
+            task = prog.add_task("Des-siguiendo", total=len(ids))
+            for aid in ids:
+                r = requests.delete(f"{_API}/users/{self.user_id}/favorites/artists/{aid}",
+                                    params={"countryCode": self.country}, headers=self.headers, timeout=20)
+                if r.status_code == 401:
+                    get_session().get_api()
+                    self.headers["Authorization"] = f"Bearer {load_auth_data().token}"
+                    r = requests.delete(f"{_API}/users/{self.user_id}/favorites/artists/{aid}",
+                                        params={"countryCode": self.country}, headers=self.headers, timeout=20)
+                if r.ok:
+                    removed += 1
+                else:
+                    failed += 1
+                    logger.error("DELETE artist/%s falló: %s", aid, r.status_code)
+                prog.advance(task)
+                if pause > 0:
+                    time.sleep(pause)
+        msg = f"[green]OK: {removed} des-seguidos[/]"
+        if failed:
+            msg += f" | [red]{failed} fallaron[/]"
+        console.print(msg)
+
     # ── entrypoints ──────────────────────────────────────────────────────────
     def sync_artists(self, chunk_size: int, pause: float) -> None:
         artists = self.db.get_all_artists()
