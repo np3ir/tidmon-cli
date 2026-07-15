@@ -333,6 +333,42 @@ tidmon refresh --download
 
 ---
 
+## `favorite` / `follow` / `unfollow` — Sync a la cuenta TIDAL
+
+Estos comandos **escriben en tu cuenta TIDAL** (los favoritos/seguidos). Son los únicos de tidmon que tocan la cuenta; el resto (`refresh`, `monitor`, etc.) son de solo lectura del catálogo. TIDAL acepta lotes de IDs, así que seguir en masa son pocas llamadas, no una por artista.
+
+> ⚠️ **Límite de TIDAL: máximo 10,000 artistas favoritos.** Si tu DB tiene más, `favorite`/`follow` llenan hasta 10,000 y avisan que el resto no cabe. Usa `follow`/`unfollow` para curar cuáles ocupan esos slots.
+
+### `favorite` — sincronizar TODA la DB
+
+| Comando | Qué hace |
+|---|---|
+| `tidmon favorite` | Marca como seguidos todos los artistas **y** añade todas las playlists de la DB. Solo añade lo que falte (idempotente/reanudable). |
+| `tidmon favorite --no-playlists` | Solo artistas. |
+| `tidmon favorite --no-artists` | Solo playlists. |
+| `tidmon favorite --chunk-size 100 --pause 1.0` | Ajusta IDs por llamada y la pausa entre lotes. |
+
+### `follow` — seguir artistas específicos
+
+| Comando | Qué hace |
+|---|---|
+| `tidmon follow "Bad Bunny" "Rosalía"` | Sigue por nombre (resuelto contra la DB de tidmon). |
+| `tidmon follow 17364 1566` | Sigue por ID de TIDAL. |
+| `tidmon follow "Rosalía" 17364` | Mezcla nombres e IDs. |
+| `tidmon follow --file artistas.txt` | Sigue los de un archivo (un artista por línea; ID o nombre; `#` = comentario). |
+
+### `unfollow` — dejar de seguir
+
+| Comando | Qué hace |
+|---|---|
+| `tidmon unfollow "Bonnie Tyler"` | Deja de seguir por nombre. |
+| `tidmon unfollow 937 --file quitar.txt` | Combina IDs, nombres y un archivo. |
+| `tidmon unfollow --all` | Deja de seguir a **TODOS** los artistas (pide confirmación). |
+
+> Nombres que no estén en la DB de tidmon se avisan y se saltan. Para curar los 10k slots: `tidmon unfollow --file quitar.txt` para liberar espacio, luego `tidmon follow --file nuevos.txt`.
+
+---
+
 ## `config` — Configuration
 
 | Comando | Qué hace |

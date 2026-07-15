@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — 2026-07-15
+
+### Added
+
+- **`tidmon favorite`** (`cmd/favorite.py`, `cli.py`)
+  — sync tidmon's library to your TIDAL account favorites: follow every monitored
+  artist (`POST users/{id}/favorites/artists`, `artistIds` comma-batched) and add every
+  monitored playlist (`favorites/playlists`, `uuids`). Reads current favorites first, so
+  it only adds what's missing and is safe to re-run. Options: `--artists/--no-artists`,
+  `--playlists/--no-playlists`, `--chunk-size` (default 100), `--pause` (default 1.0s).
+  Proactive token refresh + one 401 retry mid-run.
+- **`tidmon follow`** (`cmd/favorite.py`, `cli.py`)
+  — follow specific artists by numeric ID or by name (resolved against the local DB),
+  or from a `--file` (one artist per line; ID or name; `#` comments). Batched POST.
+- **`tidmon unfollow`** (`cmd/favorite.py`, `cli.py`)
+  — stop following artists by ID/name/`--file`, or `--all` to clear every followed
+  artist (behind a confirmation prompt). `DELETE users/{id}/favorites/artists/{artistId}`
+  per artist. Lets you curate which artists occupy TIDAL's 10,000-favorite cap.
+
+### Notes
+
+- **TIDAL caps favorite artists at 10,000** (API `subStatus 7004`). `favorite`/`follow`
+  fill up to the cap and then stop with a clear message instead of hammering doomed
+  calls. Playlists have no comparable practical limit.
+
+---
+
 ## [Unreleased] — 2026-07-07
 
 ### Added
