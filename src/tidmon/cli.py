@@ -18,6 +18,7 @@ from tidmon.cmd.config import ConfigCommand
 from tidmon.cmd.backup import Backup
 from tidmon.cmd.xref import Xref
 from tidmon.cmd.playlist import Playlist
+from tidmon.cmd.favorite import Favorite
 from tidmon.core.utils.url import parse_url, TidalType
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -83,6 +84,20 @@ def logout():
 def whoami():
     """Show current authentication status."""
     Auth().status()
+
+
+@cli.command()
+@click.option('--artists/--no-artists', default=True, help='Seguir los artistas de la DB (default: sí).')
+@click.option('--playlists/--no-playlists', default=True, help='Añadir las playlists de la DB (default: sí).')
+@click.option('--chunk-size', default=100, metavar='N', help='IDs por llamada al API (default: 100).')
+@click.option('--pause', default=1.0, metavar='SECONDS', help='Pausa entre lotes (default: 1.0s).')
+def favorite(artists, playlists, chunk_size, pause):
+    """Marca en TIDAL como seguidos/favoritos todos los artistas y playlists de tidmon.
+
+    Solo añade lo que falte (lee tus favoritos actuales primero). TIDAL acepta
+    lotes, así que son ~pocas llamadas, no una por artista.
+    """
+    Favorite().run(artists=artists, playlists=playlists, chunk_size=chunk_size, pause=pause)
 
 
 @cli.command('auth-refresh')
