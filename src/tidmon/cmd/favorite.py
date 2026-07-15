@@ -69,8 +69,12 @@ class Favorite:
                 break
         return existing
 
-    def _post_chunk(self, kind: str, field: str, ids: list) -> bool:
-        """POST un lote de IDs a favorites/{kind}. True si HTTP 2xx."""
+    # subStatus 7004 = "Cannot have more than 10000 favorites" (tope duro de TIDAL)
+    FAVORITES_CAP_SUBSTATUS = 7004
+
+    def _post_chunk(self, kind: str, field: str, ids: list) -> str:
+        """POST un lote de IDs a favorites/{kind}.
+        Devuelve 'ok' | 'fail' | 'cap' (tope de 10000 alcanzado → abortar)."""
         r = requests.post(f"{_API}/users/{self.user_id}/favorites/{kind}",
                           params={"countryCode": self.country},
                           data={field: ",".join(str(i) for i in ids)},
@@ -83,9 +87,16 @@ class Favorite:
                               params={"countryCode": self.country},
                               data={field: ",".join(str(i) for i in ids)},
                               headers=self.headers, timeout=30)
-        if not r.ok:
-            logger.error("POST favorites/%s falló: %s %s", kind, r.status_code, r.text[:150])
-        return r.ok
+        if r.ok:
+            return "ok"
+        # ¿Tope de 10000 favoritos? No tiene sentido seguir mandando lotes.
+        try:
+            if r.json().get("subStatus") == self.FAVORITES_CAP_SUBSTATUS:
+                return "cap"
+        except Exception:
+            pass
+        logger.error("POST favorites/%s falló: %s %s", kind, r.status_code, r.text[:150])
+        return "fail"
 
     # ── sincronización genérica ──────────────────────────────────────────────
     def _sync(self, label: str, kind: str, get_field: str, id_key: str,
@@ -109,13 +120,19 @@ class Favorite:
         chunks = [pending[i:i + chunk_size] for i in range(0, len(pending), chunk_size)]
         added = 0
         failed = 0
+        capped = False
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                       BarColumn(), TextColumn("{task.completed}/{task.total} lotes"),
                       TimeElapsedColumn(), console=console) as prog:
             task = prog.add_task(f"Añadiendo {label}", total=len(chunks))
             for chunk in chunks:
-                if self._post_chunk(kind, get_field, chunk):
+                result = self._post_chunk(kind, get_field, chunk)
+                if result == "ok":
                     added += len(chunk)
+                elif result == "cap":
+                    # Tope de 10000 de TIDAL: no seguir martillando lotes que fallarán todos.
+                    capped = True
+                    break
                 else:
                     failed += len(chunk)
                 prog.advance(task)
@@ -126,6 +143,11 @@ class Favorite:
         if failed:
             msg += f" | [red]{failed} fallaron[/]"
         console.print(msg)
+        if capped:
+            console.print(
+                "[bold red]Tope de TIDAL alcanzado: máximo 10,000 favoritos.[/] "
+                f"No caben más {label}; el resto quedó sin añadir."
+            )
 
     # ── entrypoints ──────────────────────────────────────────────────────────
     def sync_artists(self, chunk_size: int, pause: float) -> None:
