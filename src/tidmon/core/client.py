@@ -217,6 +217,12 @@ class TidalClientImproved:
                 userMessage=f"HTTP Error {http_err.response.status_code} for {url}",
                 status=http_err.response.status_code,
             ) from http_err
+        except ApiError:
+            # Deliberately-raised ApiError (e.g. the anonymous public-path 4xx above)
+            # already carries the real status — re-raise it unchanged. Without this,
+            # the broad handler below would swallow it and relabel it status=500,
+            # making the retry loop treat a 400/404 as a retriable server error.
+            raise
         except (JSONDecodeError, Exception) as err:
             log.error(f"Error fetching {url}: {err}")
             raise ApiError(userMessage=f"Failed to fetch or decode from {url}", status=500) from err

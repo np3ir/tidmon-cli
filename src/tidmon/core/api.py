@@ -896,12 +896,17 @@ class TidalAPI:
     # ── Playlists ─────────────────────────────────────────────────────────────
 
     def get_playlist(self, playlist_uuid: str) -> Optional[Playlist]:
-        """Get playlist metadata. Uses API v2."""
+        """Get playlist metadata.
+
+        Uses API v1. The v2 endpoint (api.tidal.com/v2/playlists/{uuid}) requires
+        a real OAuth Bearer token and rejects the anonymous x-tidal-token call with
+        HTTP 400 ("Token is missing", subStatus 11002). v1 accepts x-tidal-token and
+        returns the same metadata, matching get_playlist_items() which is already v1.
+        """
         try:
             return self._fetch_with_retry(
                 Playlist, f"playlists/{playlist_uuid}",
                 params={"countryCode": self.country_code},
-                api_version="v2"
             )
         except Exception as e:
             log.error(f"Failed to fetch playlist {playlist_uuid}: {e}", exc_info=True)
