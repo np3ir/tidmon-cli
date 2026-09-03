@@ -5,6 +5,16 @@ data/
 __pycache__/
 *.pyc
 
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Portable handoff (not committed; see CLAUDE.md project memory rule)
+PROJECT_CONTEXT.md
+
 # IDE / Editor folders
 .vscode/
 .idea/

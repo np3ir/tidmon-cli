@@ -53,11 +53,16 @@ class TokenStorage:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
 
     def save(self, token: TidalToken):
-        self.storage_path.write_text(json.dumps(token.to_dict(), indent=2))
-        try:
-            self.storage_path.chmod(0o600)
-        except Exception:
-            pass
+        # Atomic + owner-only: write a temp file in the same directory, chmod it
+        # 0600 BEFORE publishing (so the token is never briefly world-readable),
+        # then os.replace. A crash or full disk mid-write can no longer truncate
+        # the token file and silently force the user to re-login.
+        from tidmon.core.utils.fsio import atomic_write_bytes
+        atomic_write_bytes(
+            self.storage_path,
+            json.dumps(token.to_dict(), indent=2).encode("utf-8"),
+            chmod_posix=0o600,
+        )
 
     def load(self) -> Optional[TidalToken]:
         if not self.storage_path.exists():

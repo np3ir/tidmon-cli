@@ -15,6 +15,7 @@ Features:
 import asyncio
 import shutil
 import hashlib
+import sys
 import uuid
 import logging
 from pathlib import Path
@@ -29,6 +30,22 @@ logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 1024**2  # 1MB
 MAX_RETRIES = 3
+
+
+def _make_resolver():
+    """Return the aiohttp DNS resolver to use for downloads.
+
+    On Windows, force the OS getaddrinfo() path (ThreadedResolver) instead of
+    aiohttp's default aiodns/c-ares AsyncResolver. c-ares queries DNS servers
+    directly over UDP, bypassing the Windows DNS Client (its cache, per-adapter
+    failover and retry); on flaky links or multi-WAN setups a dropped UDP packet
+    surfaces on the first attempt as the cryptic "[Errno 22] Invalid argument",
+    failing an otherwise-fine track. Everywhere else, use aiohttp's default
+    (return None). Mirrors the same fix in tiddl-elvigilante's downloader.
+    """
+    if sys.platform == "win32":
+        return aiohttp.ThreadedResolver()
+    return None
 
 
 # ====================================================================
@@ -230,7 +247,9 @@ class AdvancedDownloader:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the aiohttp session."""
         if self._session is None or self._session.closed:
-            connector = aiohttp.TCPConnector(limit=self.max_concurrent)
+            connector = aiohttp.TCPConnector(
+                limit=self.max_concurrent, resolver=_make_resolver()
+            )
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 

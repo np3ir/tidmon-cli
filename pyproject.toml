@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "tidmon-cli"
 version = "1.2.0"
 authors = [
-  { name="Np3ir", email="author@example.com" },
+  { name="np3ir", email="np3irpr@gmail.com" },
 ]
 description = "A powerful command-line tool for monitoring TIDAL artists, tracking new releases, and automating your music library management."
 readme = "README.md"
@@ -29,12 +29,41 @@ dependencies = [
     "rich>=13.7"
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
 [project.urls]
-"Homepage" = "https://github.com/Np3ir/tidmon-cli"
-"Bug Tracker" = "https://github.com/Np3ir/tidmon-cli/issues"
+"Homepage" = "https://github.com/np3ir/tidmon-cli"
+"Bug Tracker" = "https://github.com/np3ir/tidmon-cli/issues"
 
 [project.scripts]
 tidmon = "tidmon.cli:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+tidmon = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# Ported tiddl modules are kept verbatim for cross-tool parity; do not reflow.
+ignore = ["E501", "E402", "E701", "E741"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

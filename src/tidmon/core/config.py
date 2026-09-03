@@ -136,17 +136,20 @@ class Config:
 
     def _create_default_config(self):
         try:
-            self.config_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_file, 'w') as f:
-                json.dump(self.DEFAULT_CONFIG, f, indent=2)
+            # Atomic write: a crash/full disk mid-write can never leave a
+            # truncated config.json that fails to parse on next start.
+            from tidmon.core.utils.fsio import atomic_write_text
+            atomic_write_text(
+                self.config_file, json.dumps(self.DEFAULT_CONFIG, indent=2)
+            )
             logger.info(f"Default configuration created at {self.config_file}")
         except Exception as e:
             logger.error(f"Failed to create config file: {e}")
 
     def save(self) -> bool:
         try:
-            with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
+            from tidmon.core.utils.fsio import atomic_write_text
+            atomic_write_text(self.config_file, json.dumps(self.config, indent=2))
             logger.debug("Configuration saved")
             return True
         except Exception as e:
