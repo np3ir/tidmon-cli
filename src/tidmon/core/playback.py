@@ -31,9 +31,16 @@ async def report_playback(
     Fire-and-forget POST to TIDAL's events endpoint.
     Simulates a completed web player stream session.
     """
+    import sys
     import aiohttp
     try:
-        connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+        # On Windows use the OS resolver (getaddrinfo) instead of aiodns/c-ares,
+        # which bypasses the Windows DNS Client and yields spurious "[Errno 22]
+        # Invalid argument" on flaky/multi-WAN links. See core/downloader.py.
+        resolver = aiohttp.ThreadedResolver() if sys.platform == "win32" else None
+        connector = aiohttp.TCPConnector(
+            force_close=True, enable_cleanup_closed=True, resolver=resolver
+        )
         now = datetime.now(timezone.utc)
         start = now - timedelta(seconds=duration)
         session_id = str(uuid.uuid4())

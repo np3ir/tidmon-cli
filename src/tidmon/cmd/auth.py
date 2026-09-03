@@ -226,6 +226,7 @@ class Auth:
     def import_orpheus(self, path: Optional[Path] = None):
         """Import TIDAL session from OrpheusDL loginstorage.bin."""
         import pickle
+        from tidmon.core.utils.safe_pickle import safe_load
 
         search_dirs = [path, Path("C:/OrpheusDL"), Path.home() / "OrpheusDL"]
         bin_path: Optional[Path] = None
@@ -240,10 +241,20 @@ class Auth:
             console.print("[bold red]Could not find loginstorage.bin. Use --path to specify the OrpheusDL directory.")
             return
 
+        # OrpheusDL session files are Python pickles; pickle.load() on an
+        # attacker-controlled file is a remote-code-execution primitive. We only
+        # need the plain nested dict/list data, so load it through a restricted
+        # unpickler that permits builtin containers/scalars only and refuses any
+        # module/class/callable in the stream.
         try:
-            with bin_path.open("rb") as f:
-                storage = pickle.load(f)
+            storage = safe_load(bin_path)
             sessions = storage["modules"]["tidal"]["sessions"]["default"]["custom_data"]["sessions"]
+        except pickle.UnpicklingError as e:
+            console.print(
+                f"[bold red]Refused to load OrpheusDL storage: it contains a "
+                f"non-data object and could execute code ({e}).[/]"
+            )
+            return
         except Exception as e:
             console.print(f"[bold red]Failed to read Orpheus session storage: {e}")
             return
