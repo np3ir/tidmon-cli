@@ -1,321 +1,260 @@
+# Path/template formatting — mirrors tiddl-elvigilante (tiddl/core/utils/format.py)
+# so tidmon and tiddl render byte-identical paths for the same track and never
+# create duplicate files in a shared library. The ONLY intended differences from
+# tiddl's module are:
+#   * models are imported from tidmon.core.models.resources (snake_case fields),
+#   * `Explicit` is defined inline here (tidmon's models have no Explicit class;
+#     the __format__ contract is identical to tiddl's),
+#   * `safe_getattr` tolerates tidmon's snake_case fields when the ported code
+#     asks for TIDAL's camelCase names (trackNumber -> track_number, etc.),
+#   * `build_artist_string` (tidmon-only, used by metadata tagging) is preserved.
+# Filesystem-safe primitives live in tidmon.core.utils.strings (a verbatim port
+# of tiddl's strings.py). Keep both in sync — see tests/test_format_parity.py.
+from __future__ import annotations
 import re
-import sys
-import unicodedata
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional, Union, Any
-
 import logging
+import unicodedata
+import sys
+from datetime import datetime
+from dataclasses import dataclass
+from typing import Any, Optional, Union, Dict
 
-from tidmon.core.models.resources import Track, Video, Album, Playlist, Artist
+from tidmon.core.models.resources import Track, Video, Album, Playlist
+from tidmon.core.utils.strings import (
+    sanitize_filename, remove_zalgo, get_alpha_bucket,
+    truncate_str_bytes, _truncate, dedup_artists, normalize_text,
+    _DRIVE_RE, _WIN_FORBIDDEN_RE, _RESERVED_NAMES,
+    MAX_COMPONENT_LEN, RESERVED_BYTE_COUNT,
+)
 
 logger = logging.getLogger(__name__)
 
 # ============================================================
 # LENGTH LIMITS
 # ============================================================
-MAX_ARTISTS_LEN    = 100   # tiddl parity (was 60)
-MAX_TITLE_LEN      = 150   # tiddl parity (was 120)
-MAX_FILENAME_BYTES = 250   # max bytes for full path component
-MAX_COMPONENT_LEN  = 250   # alias used in sanitize_filename
-
-# Single source of truth for the artist separator default.
-# Used by generate_template_data, format_path, add_track_metadata, and
-# all config.get("artist_separator", ...) call-sites.
+# Aligned with OrpheusDL: keep names as full as the filesystem allows.
+# The only hard limit is 255 bytes PER PATH COMPONENT (ext4/btrfs/NTFS).
+# Title/artist soft caps are raised so they never pre-truncate a name; the
+# per-component byte cap is the single real limiter. The total-path cap is
+# relaxed to PATH_MAX so a long folder no longer crushes the filename
+# (Orpheus byte-limits only the folder, never the filename + uses \\?\).
+MAX_ARTISTS_LEN = 500
+MAX_TITLE_LEN = 500
+MAX_FILENAME_BYTES = 4000
 DEFAULT_ARTIST_SEPARATOR = " / "
-RESERVED_BYTE_COUNT = 50   # bytes reserved for downloader suffixes (.flac.part.<hash>)
+
+# Max artists rendered in an on-disk name before the tail collapses into
+# "& others". Compilation tracks can list 20+ artists which, joined into the
+# filename, blow past Windows MAX_PATH (260 chars) and make the file
+# unopenable in players that aren't long-path-aware (even with the registry
+# LongPathsEnabled=1). ALL artists are still written to the ARTIST tag in
+# metadata.py — this only shortens the visible name/folder.
+MAX_ARTISTS_IN_NAME = 3
+OTHERS_SUFFIX = " & others"
+
+
+def _join_artists_capped(names, separator, limit=MAX_ARTISTS_IN_NAME):
+    """Join artist names, collapsing the tail into '& others' past `limit`."""
+    names = [n for n in names if n]
+    if len(names) <= limit:
+        return separator.join(names)
+    return separator.join(names[:limit]) + OTHERS_SUFFIX
+
 
 # ============================================================
 # Security options
 # ============================================================
 ASCII_ONLY = False
-
-CHAR_TO_FULL_WIDTH = {
-    '<': '＜', '>': '＞', ':': '：', '"': '＂',
-    '/': '／', '\\': '＼', '|': '｜', '?': '？', '*': '＊',
-}
-
-_WIN_FORBIDDEN_RE  = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
-_DRIVE_RE          = re.compile(r"^[A-Za-z]:$")
-_RESERVED_NAMES    = {
-    "CON", "PRN", "AUX", "NUL",
-    *{f"COM{i}" for i in range(1, 10)},
-    *{f"LPT{i}" for i in range(1, 10)},
-}
-_RE_NORMALIZE = re.compile(r'[\W_]+')
-_NFD = unicodedata.normalize
+# _WIN_FORBIDDEN_RE, _DRIVE_RE, _RESERVED_NAMES imported from strings
 
 _KEYWORDS_PATTERN = (
+    # English / Universal
     r"f(?:ea)?t(?:\.|uring)?|with|w/|starring|guest(?: vocals:?)?|vocals?(?::| by)|"
     r"prod(?:\.|uced by)|(?:remix|edit|mix) by|"
     r"vs\.?|x|×|pres(?:en)?t(?:s|a|e)?|"
     r"collab(?:oration)?|"
+
+    # Spanish
     r"con|junto a|y|col(?:\.|aboraci[oó]n)?|invitado|voz(?: de)?|producido por|remix de|"
+
+    # German / French
     r"mit|avec|et"
 )
 
 _RE_ANTI_FEAT = re.compile(
+    # Option 1: Parentheses/Brackets - REQUIRES closing bracket
     r"(?:\s*(?:[\(\[\{])\s*"
     r"(?:" + _KEYWORDS_PATTERN + r")"
     r"\s+([^)\}\]]+?)\s*(?:[\)\]\}]))"
-    r"|"
+
+    r"|"  # OR
+
+    # Option 2: Dash Separator - consumes rest of string or until next delimiter
     r"(?:\s+[-\u2013]\s+\s*"
     r"(?:" + _KEYWORDS_PATTERN + r")"
-    r"\s+(.*))",
-    flags=re.IGNORECASE,
+    r"\s+(.*))"
+
+    r"|"  # OR
+
+    # Option 3: Bare feat/ft/featuring (no brackets/dash). Restricted to the
+    # unambiguous feat keyword; is_known() still protects titles like "6 Ft. 7 Ft.".
+    r"(?:\s+f(?:ea)?t(?:\.|uring)?\s+(.*))",
+
+    flags=re.IGNORECASE
 )
 
-
 # ============================================================
-# FIX 1 — remove_zalgo: script-aware combining-mark limits
-# ============================================================
-
-_COMMON_DIACRITICS = frozenset([
-    0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0306, 0x0307, 0x0308,
-    0x0309, 0x030A, 0x030B, 0x030C, 0x030F, 0x0311, 0x0323, 0x0327,
-    0x0328, 0x031B,
-])
-
-
-def _script_of(ch: str) -> str:
-    code = ord(ch)
-    if code <= 0x024F or (0x1E00 <= code <= 0x1EFF) or (0x2C60 <= code <= 0x2C7F):
-        return "latin"
-    if 0x0370 <= code <= 0x03FF or 0x1F00 <= code <= 0x1FFF:
-        return "greek"
-    if 0x0400 <= code <= 0x052F or 0x2DE0 <= code <= 0x2DFF:
-        return "cyrillic"
-    if 0x0590 <= code <= 0x05FF or 0xFB1D <= code <= 0xFB4F:
-        return "hebrew"
-    if 0x0600 <= code <= 0x06FF or 0x0750 <= code <= 0x077F:
-        return "arabic"
-    if 0x0E00 <= code <= 0x0E7F:
-        return "thai"
-    if 0x0E80 <= code <= 0x0EFF:
-        return "lao"
-    if 0x0900 <= code <= 0x097F:
-        return "devanagari"
-    if 0x0980 <= code <= 0x09FF:
-        return "bengali"
-    if 0x3040 <= code <= 0x30FF or 0x31F0 <= code <= 0x31FF:
-        return "japanese_kana"
-    if 0x1100 <= code <= 0x11FF or 0x3130 <= code <= 0x318F or 0xAC00 <= code <= 0xD7AF:
-        return "korean"
-    if 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF:
-        return "cjk"
-    return "other"
-
-
-_SCRIPT_MARK_LIMITS = {
-    "latin": 2, "greek": 2, "cyrillic": 1,
-    "hebrew": 3, "arabic": 3, "thai": 3, "lao": 3,
-    "devanagari": 2, "bengali": 2, "japanese_kana": 1,
-    "korean": 0, "cjk": 0, "other": 2,
-}
-
-
-def remove_zalgo(text: str) -> str:
-    """Remove Zalgo stacking while preserving legitimate diacritics (script-aware)."""
-    if not text:
-        return ""
-
-    s = unicodedata.normalize("NFC", str(text))
-    if not s:
-        return ""
-
-    out = []
-    current_script = "other"
-    mark_count = 0
-    mark_limit = 2
-    seen_base = False
-
-    for ch in s:
-        cat = unicodedata.category(ch)
-        if cat.startswith("M"):
-            if not seen_base:
-                continue
-            mark_count += 1
-            if mark_count <= mark_limit:
-                if current_script in ("latin", "greek", "cyrillic"):
-                    if ord(ch) in _COMMON_DIACRITICS:
-                        out.append(ch)
-                else:
-                    out.append(ch)
-        else:
-            seen_base = True
-            out.append(ch)
-            current_script = _script_of(ch)
-            mark_limit = _SCRIPT_MARK_LIMITS.get(current_script, 2)
-            mark_count = 0
-
-    result = "".join(out)
-
-    # Emergency: if still mostly marks on a very short string, strip all
-    total = len(result)
-    if total > 0:
-        remaining = sum(1 for c in result if unicodedata.category(c).startswith("M"))
-        if total <= 4 and remaining > total * 0.5:
-            result = "".join(c for c in result if not unicodedata.category(c).startswith("M"))
-
-    return unicodedata.normalize("NFC", result)
-
-
-# ============================================================
-# FIX 2 — _generate_fallback_name for empty / junk strings
+# Helper Functions
 # ============================================================
 
-def _extract_readable_parts(text: str, min_length: int = 2) -> list:
-    if not text:
-        return []
-    parts = re.findall(r'[a-zA-Z0-9]+', text)
-    return [p for p in parts if len(p) >= min_length]
+_CAMEL_BOUNDARY = re.compile(r'(?<!^)(?=[A-Z])')
 
 
-def _generate_fallback_name(original: str = None, item_id: int = None) -> str:
-    if original:
-        parts = _extract_readable_parts(original, min_length=2)
-        if parts:
-            parts = sorted(parts, key=len, reverse=True)[:3]
-            readable = '_'.join(parts)[:50]
-            return f"{readable}_{item_id}" if item_id else readable
-    return f"Item_{item_id}" if item_id else "Unknown"
+def _camel_to_snake(name: str) -> str:
+    return _CAMEL_BOUNDARY.sub('_', name).lower()
 
 
-# ============================================================
-# Core string utilities
-# ============================================================
+def safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """Attribute/key access from an object or dict.
 
-def _truncate(s: str, max_len: int) -> str:
-    if not isinstance(s, str):
-        s = str(s)
-    s = s.strip()
-    return s if len(s) <= max_len else s[:max_len]
-
-
-def truncate_str_bytes(text: str, max_bytes: int = 240) -> str:
-    b = str(text).encode("utf-8")
-    if len(b) <= max_bytes:
-        return text
-    return b[:max_bytes].decode("utf-8", errors="ignore")
-
-
-def normalize_text(text: str) -> str:
-    if not text:
-        return ""
-    return _RE_NORMALIZE.sub("", text).lower()
-
-
-def get_alpha_bucket(name: str) -> str:
-    if not name:
-        return "#"
-    s = remove_zalgo(str(name).strip())
-    if not s:
-        return "#"
-    ch = s[0].upper()
-    decomposed = _NFD("NFD", ch)
-    base = "".join(c for c in decomposed if unicodedata.category(c) != "Mn").upper()
-    return base if ("A" <= base <= "Z") else "#"
+    Adaptation over tiddl's `safe_getattr`: the ported code asks for TIDAL's
+    camelCase field names (trackNumber, mediaMetadata, releaseDate, ...), but
+    tidmon's pydantic models expose snake_case attributes. When the camelCase
+    name is absent we fall back to its snake_case form so the ported logic runs
+    unchanged. Behaviour otherwise matches tiddl: a present-but-None value is
+    returned as-is (NOT coerced to `default`)."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        if attr in obj:
+            return obj[attr]
+        snake = _camel_to_snake(attr)
+        return obj[snake] if snake in obj else default
+    if hasattr(obj, attr):
+        return getattr(obj, attr)
+    snake = _camel_to_snake(attr)
+    if hasattr(obj, snake):
+        return getattr(obj, snake)
+    return default
 
 
-# ============================================================
-# FIX 3 — sanitize_filename: byte truncation + reserve + fallbacks
-# FIX 4 — remove double Windows-char substitution
-# FIX 5 — alnum ratio guard
-# ============================================================
+def _fold_accents(s: str) -> str:
+    """Strip diacritics for loose comparison. Tidal spells the same person's
+    name inconsistently across its own fields (e.g. 'Raúl' vs 'Raül'), so an
+    accent-sensitive comparison misses matches that are clearly the same
+    artist and leaves a redundant "(feat. ...)" in the cleaned title."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
-def sanitize_filename(
-    s: str,
-    item_id: Optional[int] = None,
-    max_len: int = MAX_COMPONENT_LEN,
-    reserve_bytes: int = 0,
+
+def clean_track_title(track_title: str, artist_name: str) -> str:
+    """Remove redundant "(feat. X)" credits from a title when X is already a
+    known artist of the track. `artist_name` is a comma-separated list of the
+    track's artist names (main + featured)."""
+    # 1. Parse metadata artists
+    # Normalize but keep spaces for word boundary checks
+    meta_artists = [_fold_accents(a.strip().lower()) for a in (artist_name or "").split(",")]
+    meta_artists = [a for a in meta_artists if a]
+
+    # Helper to check if a name is in metadata
+    def is_known(name):
+        n = _fold_accents(name.strip().lower())
+        if not n:
+            return True  # Ignore empty parts
+
+        # Check exact match
+        if n in meta_artists:
+            return True
+
+        # Check word-boundary match inside any meta artist
+        # e.g. meta="Lil Wayne". feat="Lil". Match.
+        # meta="Lily Allen". feat="Lil". No Match.
+        pattern = rf"\b{re.escape(n)}\b"
+        for ma in meta_artists:
+            if re.search(pattern, ma):
+                return True
+        return False
+
+    def replacement(match):
+        full_match = match.group(0)
+        # Check which group matched (1 for parens, 2 for dash, 3 for bare feat)
+        content = match.group(1) or match.group(2) or match.group(3)
+
+        if not content:
+            return full_match
+
+        # Split content
+        # Separators: , & + and y et und con with
+        parts = re.split(r"\s*(?:,|&|\+| and | y | et | und | con | with )\s*", content, flags=re.IGNORECASE)
+
+        # Filter parts
+        unknown_parts = []
+        for p in parts:
+            if not is_known(p):
+                unknown_parts.append(p.strip())
+
+        if not unknown_parts:
+            # All parts known -> Remove entirely
+            return ""
+
+        if len(unknown_parts) == len(parts):
+            # None known -> Keep entirely
+            return full_match
+
+        # Partial match -> Reconstruct
+        # This is best-effort. We use ", " as separator for remaining parts.
+        new_content = ", ".join(unknown_parts)
+
+        # Reconstruct the string preserving the wrapper (parens, brackets, etc)
+        return full_match.replace(content, new_content)
+
+    current_title = track_title or ""
+    # Use re.sub with the single compiled regex
+    current_title = _RE_ANTI_FEAT.sub(replacement, current_title)
+
+    return current_title.strip()
+
+
+def build_artist_string(
+    track: Union[Track, Video],
+    separator: str = DEFAULT_ARTIST_SEPARATOR,
 ) -> str:
-    """
-    Sanitize a single filename component.
+    """Return a joined artist string for metadata tags (tidmon-only helper).
 
-    Args:
-        s:             Raw string to sanitize.
-        item_id:       Used in fallback names (e.g. "Song_12345").
-        max_len:       Maximum byte length of the result.
-        reserve_bytes: Bytes to reserve for downloader suffixes (.flac.part.<hash>).
-                       Pass RESERVED_BYTE_COUNT (50) for filenames, 0 for folders.
-    """
-    if not s or not s.strip():
-        return _generate_fallback_name(None, item_id)
-
-    original_input = s
-
-    # Unicode cleanup
-    s = remove_zalgo(s)
-    s = unicodedata.normalize("NFC", s)
-    s = "".join(ch for ch in s if unicodedata.category(ch) not in ("Cc", "Cf", "Cs"))
-
-    # FIX 4: Apply full-width substitutions ONLY — no secondary regex wipe.
-    # _WIN_FORBIDDEN_RE is NOT applied after this; it would destroy the full-width chars.
-    for char, full_width in CHAR_TO_FULL_WIDTH.items():
-        s = s.replace(char, full_width)
-
-    if ASCII_ONLY:
-        s = s.encode("ascii", "ignore").decode("ascii", "ignore")
-
-    # Cosmetic cleanup
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'_+', '_', s)
-    s = re.sub(r'\.+', '.', s)
-    s = s.rstrip('. ')
-
-    if not s:
-        return _generate_fallback_name(original_input, item_id)
-
-    if s == "#":
-        return s
-
-    total_chars = len(s)
-
-    # FIX 5: Alnum ratio guard — strings that are almost entirely symbols get a fallback
-    if total_chars > 3:
-        alnum_count = sum(1 for c in s if c.isalnum())
-        if alnum_count / total_chars < 0.15:
-            return _generate_fallback_name(original_input, item_id)
-
-        # Extra guard: long strings with no readable ASCII content
-        if len(s.encode("utf-8")) > 60 and not _extract_readable_parts(s, min_length=2):
-            return _generate_fallback_name(original_input, item_id)
-
-    # Windows reserved names
-    base_name = s.upper().split('.')[0].strip()
-    if base_name in _RESERVED_NAMES:
-        s = f"_{s}"
-
-    # FIX 1 (critical): byte-aware truncation with suffix reservation
-    effective_max = max(max_len - reserve_bytes, 20)
-    return truncate_str_bytes(s, effective_max)
+    Sorts MAIN and FEATURED artists separately, then joins them with
+    *separator*. Falls back to all artists (unsorted by type) when no typed
+    artists are found, and finally to the singular ``track.artist`` field as a
+    last resort. Unlike the on-disk name, ALL artists are emitted here (tags are
+    not length-limited and do not affect dedup)."""
+    artists_raw = track.artists or []
+    m_arts = sorted([a.name for a in artists_raw if a.type == "MAIN" and a.name])
+    f_arts = sorted([a.name for a in artists_raw if a.type == "FEATURED" and a.name])
+    if not m_arts and not f_arts:
+        m_arts = sorted([a.name for a in artists_raw if a.name])
+    if not m_arts and track.artist and track.artist.name:
+        m_arts = [track.artist.name]
+    return separator.join(m_arts + f_arts)
 
 
-# ============================================================
-# FIX 6 — _sanitize_segment: per-component byte limits
-# ============================================================
+# Alias for backward compatibility and clarity
+def _normalize_for_filesystem(s: str, item_id: Optional[int] = None, max_len: int = 250, reserve_bytes: int = 0) -> str:
+    return sanitize_filename(s, item_id, max_len, reserve_bytes=reserve_bytes)
 
-def _sanitize_segment(
-    segment: str,
-    index: int,
-    item_id: Optional[int] = None,
-    max_len: int = MAX_COMPONENT_LEN,
-    reserve_bytes: int = 0,
-) -> str:
+
+def _sanitize_segment(segment: str, index: int, item_id: Optional[int] = None, max_len: int = 250, reserve_bytes: int = 0) -> str:
     s = (segment or "").strip()
 
-    # Preserve leading dot (hidden files / version strings like ".1")
     leading_dot = ""
     if s.startswith("."):
         leading_dot = "."
         s = s[1:]
 
-    # Preserve Windows drive letters (C:, D:, …) verbatim
     if index == 0 and _DRIVE_RE.match(s):
         return s.upper()
 
-    effective_max = max_len - len(leading_dot)
-    sanitized = sanitize_filename(s, item_id, max_len=effective_max, reserve_bytes=reserve_bytes)
+    # Adjust max_len if a leading dot was present, to not exceed component limits
+    effective_max_len = max_len - len(leading_dot)
+
+    sanitized = _normalize_for_filesystem(s, item_id, effective_max_len, reserve_bytes=reserve_bytes)
     return leading_dot + sanitized
 
 
@@ -323,7 +262,10 @@ def _sanitize_segment(
 # Templates
 # ============================================================
 
+
 class Explicit:
+    """Renders the explicit flag in templates. __format__ contract is identical
+    to tiddl's tiddl.core.api.models.Explicit."""
     def __init__(self, val):
         self.val = val
 
@@ -331,8 +273,8 @@ class Explicit:
         if not self.val:
             return ""
         if "shortparens" in fmt: return " (explicit)"
-        if "parens"      in fmt: return " (Explicit)"
-        if "upper"       in fmt: return "EXPLICIT" if "long" in fmt else "E"
+        if "parens" in fmt: return " (Explicit)"
+        if "upper" in fmt: return "EXPLICIT" if "long" in fmt else "E"
         return "explicit" if "long" in fmt else "E"
 
 
@@ -344,286 +286,235 @@ class UserFormat:
         return fmt if self.val else ""
 
 
-# FIX 7 — Add safe_* variants to templates
 @dataclass
 class AlbumTemplate:
-    id:           int
-    title:        str
-    safe_title:   str        # pre-sanitized for use in paths
-    artist:       str
-    safe_artist:  str
-    artists:      str
+    id: int
+    title: str
+    safe_title: str
+    artist: str
+    safe_artist: str
+    artists: str
     safe_artists: str
-    date:         datetime
-    explicit:     Explicit
-    master:       UserFormat
-    release:      str
+    date: datetime
+    explicit: Explicit
+    master: UserFormat
+    release: str
 
 
 @dataclass
 class ItemTemplate:
-    id:                   int
-    title:                str
-    safe_title:           str
-    title_version:        str
-    number:               int
-    volume:               int
-    version:              str
-    copyright:            str
-    bpm:                  int
-    isrc:                 str
-    quality:              str
-    artist:               str
-    safe_artist:          str
-    artists:              str
-    features:             str
+    id: int
+    title: str
+    safe_title: str
+    title_version: str
+    number: int
+    volume: int
+    version: str
+    copyright: str
+    bpm: int
+    isrc: str
+    quality: str
+    artist: str
+    safe_artist: str
+    artists: str
+    safe_artists: str
+    features: str
     artists_with_features: str
-    explicit:             Explicit
-    dolby:                UserFormat
-    releaseDate:          datetime
-    streamStartDate:      datetime
+    explicit: Explicit
+    genre: str
+    dolby: UserFormat
+    releaseDate: datetime
+    streamStartDate: datetime
 
 
 @dataclass
 class PlaylistTemplate:
-    uuid:    str
-    title:   str
-    index:   int
+    uuid: str
+    title: str
+    index: int
     created: datetime
     updated: datetime
 
 
 # ============================================================
-# Main logic
+# Main Logic
 # ============================================================
 
 def parse_date_safe(date_str: Any) -> datetime:
     if not date_str:
         return datetime.min
     if isinstance(date_str, datetime):
-        dt = date_str
-    else:
-        try:
-            if len(str(date_str)) == 10 and '-' in str(date_str):
-                dt = datetime.strptime(str(date_str), "%Y-%m-%d")
-            else:
-                dt = datetime.fromisoformat(str(date_str))
-        except (ValueError, TypeError):
-            return datetime.min
-    return dt
+        return date_str
+    try:
+        # Handle simple date strings like "2023-01-01"
+        if len(str(date_str)) == 10 and '-' in str(date_str):
+            return datetime.strptime(str(date_str), "%Y-%m-%d")
+        return datetime.fromisoformat(str(date_str))
+    except ValueError:
+        return datetime.min
 
 
-def clean_track_title(track: Track) -> str:
-    if not track or not track.title:
-        return ""
-
-    meta_artists = [a.name.strip().lower() for a in track.artists if a.name]
-    meta_artists = [a for a in meta_artists if a]
-
-    def is_known(name):
-        n = name.strip().lower()
-        if not n:
-            return True
-        if n in meta_artists:
-            return True
-        pattern = rf"\b{re.escape(n)}\b"
-        for ma in meta_artists:
-            if re.search(pattern, ma):
-                return True
-        return False
-
-    def replacement(match):
-        full_match = match.group(0)
-        content = match.group(1) or match.group(2)
-        if not content:
-            return full_match
-        parts = re.split(
-            r"\s*(?:,|&|\+| and | y | et | und | con | with )\s*",
-            content, flags=re.IGNORECASE,
-        )
-        unknown_parts = [p.strip() for p in parts if not is_known(p)]
-        if not unknown_parts:
-            return ""
-        if len(unknown_parts) == len(parts):
-            return full_match
-        return full_match.replace(content, ", ".join(unknown_parts))
-
-    return _RE_ANTI_FEAT.sub(replacement, track.title).strip()
-
-
-def build_artist_string(
-    track: Union[Track, Video],
-    separator: str = DEFAULT_ARTIST_SEPARATOR,
-) -> str:
-    """Return a joined artist string for metadata tags.
-
-    Sorts MAIN and FEATURED artists separately, then joins them with
-    *separator*.  Falls back to all artists (unsorted by type) when no
-    typed artists are found, and finally to the singular ``track.artist``
-    field as a last resort.
-    """
-    artists_raw = track.artists or []
-    m_arts = sorted([a.name for a in artists_raw if a.type == "MAIN"     and a.name])
-    f_arts = sorted([a.name for a in artists_raw if a.type == "FEATURED" and a.name])
-    if not m_arts and not f_arts:
-        m_arts = sorted([a.name for a in artists_raw if a.name])
-    if not m_arts and track.artist and track.artist.name:
-        m_arts = [track.artist.name]
-    return separator.join(m_arts + f_arts)
-
-
-def generate_template_data(
-    item:             Optional[Union[Track, Video]] = None,
-    album:            Optional[Album]               = None,
-    playlist:         Optional[Playlist]            = None,
-    playlist_index:   int                           = 0,
-    quality:          str                           = "",
-    artist_separator: str                           = DEFAULT_ARTIST_SEPARATOR,
-) -> dict:
-
-    safe_file_len   = MAX_COMPONENT_LEN   # 250 bytes for filenames
-    safe_folder_len = 150                 # 150 bytes for folder components
+def generate_template_data(item=None, album=None, playlist=None, playlist_index=0, quality="", artist_separator: str = DEFAULT_ARTIST_SEPARATOR) -> dict:
+    # Helper to calc safe limits (defined at scope level to be available for all blocks)
+    # sanitize_filename now accepts reserve_bytes, so we pass explicit limits here.
+    safe_file_len = MAX_COMPONENT_LEN
+    safe_folder_len = MAX_COMPONENT_LEN
 
     item_tmpl = None
+
     if item:
-        artists_raw = item.artists or []
-        m_arts = sorted([a.name for a in artists_raw if a.type == "MAIN"     and a.name])
-        f_arts = sorted([a.name for a in artists_raw if a.type == "FEATURED" and a.name])
+        # Handle dicts where artists might be a list of dicts or objects
+        artists_raw = safe_getattr(item, "artists") or []
+        m_arts = []
+        f_arts = []
 
-        # Fallback: single artist without a type tag
-        if not m_arts and len(artists_raw) == 1 and artists_raw[0].name:
-            m_arts = [artists_raw[0].name]
+        # Helper to get name from artist object/dict
+        def get_name(a): return safe_getattr(a, "name") if not isinstance(a, dict) else a.get("name")
+        def get_type(a): return safe_getattr(a, "type") if not isinstance(a, dict) else a.get("type")
 
-        ver = (getattr(item, 'version', None) or "").strip()
+        for a in artists_raw:
+            a_name = get_name(a)
+            a_type = get_type(a)
+            if a_type == "MAIN": m_arts.append(a_name)
+            elif a_type == "FEATURED": f_arts.append(a_name)
+            # Fallback if no type (common in some API responses)
+            elif not a_type: m_arts.append(a_name)
+
+        # Dedup normalizado (acentos/mayúsculas): el mismo artista con distinta
+        # grafía cuenta una sola vez; los FEATURED ya acreditados como MAIN se
+        # descartan. Paridad con streamrip-elvigilante (caso "ROSALÍA"/"Rosalia").
+        m_arts = sorted(dedup_artists(m_arts))
+        f_arts = sorted(dedup_artists(f_arts, exclude=m_arts))
+
+        ver = safe_getattr(item, "version", "") or ""
 
         is_dolby = False
-        if isinstance(item, Track) and item.media_metadata and item.media_metadata.tags:
-            is_dolby = "DOLBY_ATMOS" in item.media_metadata.tags
+        # Here we use Track and it will work even if it's the dummy version if import failed
+        if isinstance(item, (Track, dict)):
+            metadata = safe_getattr(item, "mediaMetadata", None)
+            tags = safe_getattr(metadata, "tags", []) or []
+            is_dolby = "DOLBY_ATMOS" in tags
 
-        clean_title = clean_track_title(item)
-        t_trunc  = _truncate(clean_title, MAX_TITLE_LEN)
-        ver_str  = f" ({ver})" if ver else ""
+        all_names_list = m_arts + f_arts
+        # Always use comma for clean_track_title (it splits on comma internally)
+        all_names_csv = ", ".join(all_names_list) if all_names_list else ", ".join(m_arts)
+        item_title = safe_getattr(item, "title", "")
+        clean_title = clean_track_title(item_title, all_names_csv)
+
+        t_trunc = _truncate(clean_title, MAX_TITLE_LEN)
+        ver_str = f" ({ver})" if ver else ""
         tv_trunc = _truncate(f"{t_trunc}{ver_str}", MAX_TITLE_LEN)
-        af_trunc = _truncate(artist_separator.join(m_arts + f_arts), MAX_ARTISTS_LEN)
+        af_trunc = _truncate(_join_artists_capped(m_arts + f_arts, artist_separator), MAX_ARTISTS_LEN)
 
-        art_name = (
-            item.artist.name
-            if item.artist and item.artist.name
-            else (m_arts[0] if m_arts else "")
-        )
+        item_artist_obj = safe_getattr(item, "artist", None)
+        art_name = get_name(item_artist_obj) if item_artist_obj else (m_arts[0] if m_arts else "")
 
         item_tmpl = ItemTemplate(
-            id                   = item.id or 0,
-            title                = t_trunc,
-            safe_title           = sanitize_filename(t_trunc, item.id, max_len=safe_file_len),
-            title_version        = tv_trunc,
-            number               = getattr(item, 'track_number',  None) or 0,
-            volume               = getattr(item, 'volume_number', None) or 0,
-            version              = ver,
-            copyright            = getattr(item, 'copyright', None) or "",
-            bpm                  = getattr(item, 'bpm',        None) or 0,
-            isrc                 = getattr(item, 'isrc',       None) or "",
-            quality              = quality,
-            artist               = art_name,
-            safe_artist          = sanitize_filename(art_name, item.id, max_len=safe_folder_len),
-            artists              = artist_separator.join(m_arts),
-            features             = artist_separator.join(f_arts),
-            artists_with_features= af_trunc,
-            explicit             = Explicit(item.explicit),
-            dolby                = UserFormat(is_dolby),
-            releaseDate          = parse_date_safe(item.release_date),
-            streamStartDate      = parse_date_safe(item.stream_start_date),
+            id=safe_getattr(item, "id", 0),
+            title=t_trunc,
+            safe_title=sanitize_filename(t_trunc, safe_getattr(item, "id", 0), max_len=safe_file_len),
+            title_version=tv_trunc,
+            number=safe_getattr(item, "trackNumber", 0),
+            volume=safe_getattr(item, "volumeNumber", 0),
+            version=ver,
+            copyright=safe_getattr(item, "copyright", "") or "",
+            bpm=safe_getattr(item, "bpm", 0),
+            isrc=safe_getattr(item, "isrc", "") or "",
+            quality=quality,
+            artist=art_name,
+            safe_artist=sanitize_filename(art_name, safe_getattr(item, "id", 0), max_len=safe_folder_len),
+            artists=_join_artists_capped(m_arts, artist_separator),
+            safe_artists=sanitize_filename(_join_artists_capped(m_arts, artist_separator), safe_getattr(item, "id", 0), max_len=safe_folder_len),
+            features=artist_separator.join(f_arts),
+            artists_with_features=af_trunc,
+            explicit=Explicit(safe_getattr(item, "explicit", None)),
+            genre=safe_getattr(safe_getattr(item, "album"), "genre", "") or "",
+            dolby=UserFormat(is_dolby),
+            releaseDate=parse_date_safe(safe_getattr(item, "releaseDate", "")),
+            streamStartDate=parse_date_safe(safe_getattr(item, "streamStartDate", "")),
         )
 
     album_tmpl = None
     if album:
-        d    = parse_date_safe(album.release_date)
-        tags = (album.media_metadata.tags
-                if album.media_metadata and album.media_metadata.tags else [])
+        d = parse_date_safe(safe_getattr(album, "releaseDate"))
+        metadata = safe_getattr(album, "mediaMetadata", None)
+        tags = safe_getattr(metadata, "tags", []) or []
         is_master = "HIRES_LOSSLESS" in tags and quality == "MAX"
 
-        clean_album_title = album.title or ""
-        clean_album_title = re.sub(
-            r"\s*\(\s*(?:Explicit|E)\s*\)", "", clean_album_title, flags=re.IGNORECASE
-        )
+        clean_album_title = safe_getattr(album, "title", "") or ""
+        clean_album_title = re.sub(r"\s*\(\s*(?:Explicit|E)\s*\)", "", clean_album_title, flags=re.IGNORECASE)
 
-        album_artist_name = (
-            album.artist.name if album.artist and album.artist.name else ""
-        )
-        alb_artists      = album.artists or []
-        alb_main_artists = sorted([a.name for a in alb_artists if a.type == "MAIN" and a.name])
+        album_artist_obj = safe_getattr(album, "artist", None)
+        # Handle dict vs object for artist
+        album_artist_name = (safe_getattr(album_artist_obj, "name") if not isinstance(album_artist_obj, dict) else album_artist_obj.get("name")) if album_artist_obj else ""
+
+        alb_artists = safe_getattr(album, "artists", []) or []
+        alb_main_artists = []
+        for a in alb_artists:
+            if isinstance(a, dict):
+                if a.get("type") == "MAIN": alb_main_artists.append(a.get("name"))
+            elif getattr(a, "type", None) == "MAIN":
+                alb_main_artists.append(a.name)
 
         album_tmpl = AlbumTemplate(
-            id           = album.id or 0,
-            title        = clean_album_title,
-            safe_title   = sanitize_filename(clean_album_title, album.id, max_len=safe_folder_len),
-            artist       = album_artist_name,
-            safe_artist  = sanitize_filename(album_artist_name, album.id, max_len=safe_folder_len),
-            artists      = ", ".join(alb_main_artists),
-            safe_artists = sanitize_filename(", ".join(alb_main_artists), album.id, max_len=safe_folder_len),
-            date         = d,
-            explicit     = Explicit(album.explicit),
-            master       = UserFormat(is_master),
-            release      = album.type or "ALBUM",
+            id=safe_getattr(album, "id", 0),
+            title=clean_album_title,
+            safe_title=sanitize_filename(clean_album_title, safe_getattr(album, "id", 0), max_len=safe_folder_len),
+            artist=album_artist_name,
+            safe_artist=sanitize_filename(album_artist_name, safe_getattr(album, "id", 0), max_len=safe_folder_len),
+            artists=_join_artists_capped(alb_main_artists, artist_separator),
+            safe_artists=sanitize_filename(_join_artists_capped(alb_main_artists, artist_separator), safe_getattr(album, "id", 0), max_len=safe_folder_len),
+            date=d,
+            explicit=Explicit(safe_getattr(album, "explicit", None)),
+            master=UserFormat(is_master),
+            release=safe_getattr(album, "type", "ALBUM")
         )
     elif item:
-        # Fallback album for Music Videos or tracks without album context
-        d        = parse_date_safe(item.release_date)
-        art_name = item.artist.name if item.artist and item.artist.name else ""
+        # Fallback for items without album (e.g. Music Videos) to avoid template errors
+        # when users use {album.artist} etc.
+        d = parse_date_safe(safe_getattr(item, "releaseDate", ""))
+        item_artist_obj = safe_getattr(item, "artist", None)
+        art_name = (safe_getattr(item_artist_obj, "name") if not isinstance(item_artist_obj, dict) else item_artist_obj.get("name")) if item_artist_obj else ""
 
         album_tmpl = AlbumTemplate(
-            id           = 0,
-            title        = item.title or "",
-            safe_title   = sanitize_filename(item.title or "", 0, max_len=safe_folder_len),
-            artist       = art_name,
-            safe_artist  = sanitize_filename(art_name, 0, max_len=safe_folder_len),
-            artists      = art_name,
-            safe_artists = sanitize_filename(art_name, 0, max_len=safe_folder_len),
-            date         = d,
-            explicit     = Explicit(item.explicit),
-            master       = UserFormat(False),
-            release      = "SINGLE",
+            id=0,
+            title=safe_getattr(item, "title", ""),
+            safe_title=sanitize_filename(safe_getattr(item, "title", ""), 0, max_len=safe_folder_len),
+            artist=art_name,
+            safe_artist=sanitize_filename(art_name, 0, max_len=safe_folder_len),
+            artists=art_name,
+            safe_artists=sanitize_filename(art_name, 0, max_len=safe_folder_len),
+            date=d,
+            explicit=Explicit(safe_getattr(item, "explicit", None)),
+            master=UserFormat(False),
+            release="SINGLE"
         )
 
     playlist_tmpl = None
     if playlist:
-        c = parse_date_safe(playlist.created)
-        u = parse_date_safe(playlist.last_updated)
-        playlist_tmpl = PlaylistTemplate(
-            uuid    = playlist.uuid,
-            title   = playlist.title,
-            index   = playlist_index,
-            created = c,
-            updated = u,
-        )
+        c = parse_date_safe(safe_getattr(playlist, "created"))
+        u = parse_date_safe(safe_getattr(playlist, "lastUpdated"))
+        playlist_tmpl = PlaylistTemplate(uuid=playlist.uuid, title=playlist.title, index=playlist_index, created=c, updated=u)
 
     return {"item": item_tmpl, "album": album_tmpl, "playlist": playlist_tmpl}
 
 
 def _normalize_initial_folder_component(component: str) -> str:
-    if not component:
-        return component
+    if not component: return component
     comp = str(component).strip()
-    if not comp or comp == "#":
-        return "#"
-    if len(comp) == 1:
-        return get_alpha_bucket(comp)
+    if not comp or comp == "#": return "#"
+    if len(comp) == 1: return get_alpha_bucket(comp)
     return component
 
-
-# ============================================================
-# FIX 8 — clean_filepath: per-segment byte limits
-# ============================================================
 
 def clean_filepath(fp: str) -> str:
     s = remove_zalgo(fp)
     s = unicodedata.normalize("NFC", s)
     s = re.sub(r"\s+", " ", s).strip()
     s = s.rstrip(". ")
-
     is_unc = s.startswith("//") or s.startswith("\\\\")
 
-    parts = re.split(r"[/\\]+", s)
+    parts = re.split(r"[\\/]+", s)
     drive = None
 
     if parts:
@@ -631,18 +522,24 @@ def clean_filepath(fp: str) -> str:
         if _DRIVE_RE.match(first):
             drive = first.upper()
             parts = parts[1:]
-        elif parts[0]:
-            parts[0] = _normalize_initial_folder_component(parts[0])
+        else:
+            # Only normalize first component if it's NOT a drive letter
+            if parts[0]:
+                parts[0] = _normalize_initial_folder_component(parts[0])
 
-    parts = [p for p in parts if p]
     sanitized = []
+    # Filter empty parts first
+    parts = [p for p in parts if p]
     for idx, p in enumerate(parts):
-        is_last  = (idx == len(parts) - 1)
-        limit    = MAX_COMPONENT_LEN if is_last else 150   # folders capped at 150 bytes
-        r_bytes  = RESERVED_BYTE_COUNT if is_last else 0
-        sanitized.append(sanitize_filename(p, max_len=limit, reserve_bytes=r_bytes))
+        is_last = (idx == len(parts) - 1)
+        # Apply reservation ONLY to the last component (filename)
+        # Folders get 0 reservation.
+        r_bytes = RESERVED_BYTE_COUNT if is_last else 0
+        limit = MAX_COMPONENT_LEN  # folders & filename: same FS component cap
+        sanitized.append(_normalize_for_filesystem(p, max_len=limit, reserve_bytes=r_bytes))
+    parts = sanitized
 
-    path = "/".join(sanitized)
+    path = "/".join(parts)
 
     if drive:
         path = f"{drive}{('/' + path) if path else ''}"
@@ -651,18 +548,10 @@ def clean_filepath(fp: str) -> str:
     return path
 
 
-# ============================================================
-# FIX 9 — truncate_filepath_to_max: byte-correct length check
-# ============================================================
-
-def truncate_filepath_to_max(path: str, max_length: int = MAX_FILENAME_BYTES) -> str:
-    # FIX: compare byte length, not character length (critical for CJK/emoji)
-    if len(path.encode("utf-8")) <= max_length:
-        return path
-
-    m = re.match(r"^(.*[/\\])([^/\\]+)$", path)
-    if not m:
-        return truncate_str_bytes(path, max_length)
+def truncate_filepath_to_max(path: str, max_length: int = 240) -> str:
+    if len(path.encode('utf-8')) <= max_length: return path
+    m = re.match(r"^(.*[\\/])([^\\/]+)$", path)
+    if not m: return truncate_str_bytes(path, max_length)
 
     dir_path, filename = m.group(1), m.group(2)
     if "." in filename:
@@ -671,96 +560,132 @@ def truncate_filepath_to_max(path: str, max_length: int = MAX_FILENAME_BYTES) ->
     else:
         base, ext = filename, ""
 
-    # FIX: use byte lengths for all measurements
-    dir_len  = len(dir_path.encode("utf-8"))
-    ext_len  = len(ext.encode("utf-8"))
-    allowed  = max_length - dir_len - ext_len
+    dir_len = len(dir_path.encode('utf-8'))
+    ext_len = len(ext.encode('utf-8'))
+    allowed_base_len = max_length - dir_len - ext_len
 
-    if allowed <= 0:
-        return truncate_str_bytes(path, max_length)
+    if allowed_base_len <= 0: return truncate_str_bytes(path, max_length)
 
-    truncated_base = truncate_str_bytes(base, allowed)
+    truncated_base = truncate_str_bytes(base, allowed_base_len)
     return f"{dir_path}{truncated_base}{ext}"
 
 
-# ============================================================
-# format_template — FIX 10: per-segment limits + FIX 11: sanitized disc folder
-# ============================================================
+def _prepare_long_path(path: str) -> str:
+    """
+    Prepends the Windows Long Path prefix (\\\\?\\) if necessary.
+    Handles standard paths and UNC paths.
+    Only applies on Windows.
+    """
+    if sys.platform != "win32":
+        return path
 
-def format_template(
-    template:         str,
-    item:             Optional[Union[Track, Video]] = None,
-    album:            Optional[Album]               = None,
-    playlist:         Optional[Playlist]            = None,
-    playlist_index:   int                           = 0,
-    quality:          str                           = "",
-    with_asterisk_ext: bool                         = True,
-    artist_separator: str                           = DEFAULT_ARTIST_SEPARATOR,
-    **extra,
-) -> str:
+    path = path.replace("/", "\\")
 
-    template  = template.strip().lstrip('\ufeff').replace("\\", "/")
-    base_data = generate_template_data(item, album, playlist, playlist_index, quality, artist_separator)
+    if path.startswith("\\\\?\\"):
+        return path
 
-    aliases: dict = {}
+    # UNC Paths: \\Server\Share -> \\?\UNC\Server\Share
+    if path.startswith("\\\\"):
+        # Removing the leading \\ to append to UNC\
+        # NB: the backslash-bearing expression is bound to a name first — an
+        # f-string expression part cannot contain a backslash before Python 3.12
+        # (PEP 701), so inlining it breaks the advertised 3.10/3.11 support.
+        stripped = path.lstrip("\\")
+        return f"\\\\?\\UNC\\{stripped}"
+
+    # Absolute paths: C:\Foo -> \\?\C:\Foo
+    if _DRIVE_RE.match(path[:2]):
+        return f"\\\\?\\{path}"
+
+    return path
+
+
+def format_template(template: str,
+                    item: Optional[Union[Track, Video, Dict]] = None,
+                    album: Optional[Union[Album, Dict]] = None,
+                    playlist: Optional[Union[Playlist, Dict]] = None,
+                    playlist_index: int = 0,
+                    quality: str = "",
+                    with_asterisk_ext: bool = True,
+                    artist_separator: str = DEFAULT_ARTIST_SEPARATOR,
+                    **extra) -> str:
+
+    template = template.strip().lstrip('\ufeff').replace("\\", "/")
+    base_data = generate_template_data(item, album, playlist, playlist_index, quality, artist_separator=artist_separator)
+
+    aliases = {}
     if item and base_data.get("item"):
-        aliases["title"]          = base_data["item"].title
-        aliases["artist"]         = base_data["item"].artist
+        aliases["title"] = base_data["item"].title
+        aliases["artist"] = base_data["item"].artist
         aliases["artist_initials"] = get_alpha_bucket(base_data["item"].artist)
 
     if album and base_data.get("album"):
-        aliases["albumartist"]    = base_data["album"].artist
-        aliases["release_date"]   = base_data["album"].date
+        aliases["albumartist"] = base_data["album"].artist
+        # Fix: releaseDate might be datetime or string in source, but here it is datetime in Template
+        aliases["release_date"] = base_data["album"].date
+
+        # Always prefer Album Artist for initials to keep albums together in directory structure
         aliases["artist_initials"] = get_alpha_bucket(base_data["album"].artist)
 
     data = {**base_data, **extra, **aliases, "now": datetime.now(), "quality": quality}
 
-    # Determine item_id for fallback names in sanitize_filename
+    # Determine ID for fallback sanitization
     current_id = None
     if item:
-        current_id = getattr(item, "id", None)
+        current_id = safe_getattr(item, "id")
     if not current_id and album:
-        current_id = getattr(album, "id", None)
+        current_id = safe_getattr(album, "id")
 
     parts = template.split("/")
     rendered_parts = []
 
     is_unc = template.startswith("//") or template.startswith("\\\\")
-    if is_unc:
-        parts = [p for p in parts if p]
+    if is_unc: parts = [p for p in parts if p]
 
     for idx, part in enumerate(parts):
         try:
             rendered = part.format(**data)
         except Exception:
+            # Fallback for unformatted parts (maybe missing keys)
             rendered = part.replace(":", "-").replace("{", "(").replace("}", ")")
 
         seg_idx = idx if not is_unc else idx + 99
-        # FIX 10: pass per-segment limits — folders 150 bytes, filename 250 bytes
-        is_last  = (idx == len(parts) - 1)
-        limit    = MAX_COMPONENT_LEN if is_last else 150
-        r_bytes  = RESERVED_BYTE_COUNT if is_last else 0
-        rendered_parts.append(_sanitize_segment(rendered, seg_idx, current_id, limit, r_bytes))
 
-    # Auto-inject Disc folder for multi-volume albums
-    if item and album and (album.number_of_volumes or 0) > 1:
+        # Determine max length:
+        # If it's the last part, assume it's the filename base -> MAX
+        # Otherwise it's a folder -> 150
+        # sanitize_filename will subtract RESERVED_BYTE_COUNT from these.
+        is_last = (idx == len(parts) - 1)
+        limit = MAX_COMPONENT_LEN  # folders & filename: same FS component cap
+        r_bytes = RESERVED_BYTE_COUNT if is_last else 0
+
+        rendered_parts.append(_sanitize_segment(rendered, seg_idx, current_id, max_len=limit, reserve_bytes=r_bytes))
+
+    # AUTO-INJECT DISC FOLDER
+    # If album has multiple volumes and template doesn't explicitly handle volume
+    if item and album and (safe_getattr(album, "numberOfVolumes", 0) or 0) > 1:
         if "{item.volume}" not in template:
-            vol = item.volume_number or 1
-            # FIX 11: sanitize the disc folder string
-            disc_part = _sanitize_segment(f"Disc {vol}", 0, current_id, max_len=150, reserve_bytes=0)
+            vol = safe_getattr(item, "volumeNumber", 1)
+            disc_part = _sanitize_segment(f"Disc {vol}", 0, current_id, max_len=MAX_COMPONENT_LEN, reserve_bytes=0)
+            # Insert before the filename (last component)
             if len(rendered_parts) >= 1:
                 rendered_parts.insert(-1, disc_part)
             else:
                 rendered_parts.insert(0, disc_part)
 
     path = "/".join(rendered_parts)
-    if is_unc:
-        path = "//" + path
+    if is_unc: path = "//" + path
 
     path = clean_filepath(path)
     path = truncate_filepath_to_max(path, MAX_FILENAME_BYTES)
 
-    if with_asterisk_ext:
-        path += ".*"
+    if with_asterisk_ext: path += ".*"
+
+    # Apply Long Path prefix for Windows if path is absolute
+    # This bypasses the 260 character limit
+    if sys.platform == "win32":
+        # Check if path is absolute (Drive letter or UNC)
+        if _DRIVE_RE.match(path[:2]) or path.startswith("//") or path.startswith("\\\\"):
+            path = _prepare_long_path(path)
 
     return path

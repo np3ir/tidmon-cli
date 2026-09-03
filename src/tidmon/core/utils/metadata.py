@@ -231,7 +231,7 @@ def add_track_metadata(
     album_artist_str = album.artist.name if album.artist else "Unknown Artist"
 
     # Build title including version so it matches {item.title_version} used in the filename template
-    clean_title = _clean_track_title(track)
+    clean_title = _clean_track_title(track.title or "", ", ".join(artists_list))
     ver = (track.version or "").strip()
     title_with_version = f"{clean_title} ({ver})" if ver else clean_title
 
